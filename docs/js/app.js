@@ -22,10 +22,11 @@ import * as IU from './import-ui.js';
 import * as IT from './item-ui.js';
 import { ctx } from './bits.js';
 import { coverEl } from './ui.js';
+import * as CV from './covers.js';
 import { checkBackup, describeCounts } from './backup-check.js';
 import { h, toast, keyOf, fmtDate, pad2, DAY_NAMES, MONTHS, uid } from './util.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 const CITRUS_URL = 'https://amaerys.github.io/citrus-maxima/';
 const MANDARIN_URL = 'https://mandarin-work.github.io/Mandarin/';
 
@@ -70,7 +71,7 @@ async function boot() {
   Object.assign(ctx, { S, update: (fn) => store.update(fn), sheet: (c) => sheet(c), render: () => render(), go: (v, p) => go(v, p), undoTo, cheer,
     goals: () => rt.hub.goals || { aims: [] }, kinds: kindsOf, hasShifts: () => R.has(), signedIn: () => G.isSignedIn(), migrateNow, importSheet: (w) => IU.importSheet(w),
     openItem: (id) => IT.openItem(id), finish: (id) => IT.finishSheet(id), sync: () => refreshAll(true) });
-  store.subscribe(() => { applyLook(); render(); publishSoon(); });
+  store.subscribe(() => { applyLook(); render(); publishSoon(); coversSoon(); });
   store.onRemoteSync(scheduleRemoteSave);
   R.load(); loadHubCache();
   handleIncoming();
@@ -97,6 +98,7 @@ async function boot() {
   window.addEventListener('pagehide', flushRemoteSave);
   setInterval(() => { if (document.visibilityState === 'visible' && G.isSignedIn() && rt.online && Date.now() - (S().google.lastSync || 0) > 5 * 60000) refreshAll(false); }, 60000);
   renderSync();
+  coversSoon(3000);
 }
 /** Customise › Look: accent colour, stickers (tilted covers, tape), motion, real covers — synced, set on <html>. */
 function applyLook() { const l = CZ.custom(S()).look, r = document.documentElement; r.dataset.accent = l.accent; r.dataset.stickers = l.stickers ? 'on' : 'off'; r.dataset.motion = l.motion ? 'on' : 'off'; }
@@ -385,6 +387,21 @@ async function publish() {
   await G.writeOwnFile(S().settings.driveFolder, 'status.json', HUB.buildStatus(S(), new Date()), { omit: ['updatedAt'] });
   rt.publishedAt = Date.now();
 }
+// Covers by themselves: titles without a picture get one from the catalogues, a few at a time in the background (only the
+// image's address is saved; the picture loads from the site and the browser caches it).
+let coverTimer = null, coverBusy = false, coverDone = 0;
+function coversSoon(ms = 5000) { if (coverBusy || !rt.online || !CZ.custom(S()).look.covers) return; clearTimeout(coverTimer); coverTimer = setTimeout(fillCovers, ms); }
+async function fillCovers() {
+  if (coverBusy || !navigator.onLine || document.visibilityState !== 'visible' || coverDone >= 150) return;
+  const todo = CV.needing(S()).slice(0, 6); if (!todo.length) return;
+  coverBusy = true; const found = {};
+  try { for (const m of todo) { found[m.id] = await CV.findCover(m).catch(() => ''); await new Promise(r => setTimeout(r, 1100)); } }   // MusicBrainz asks for about one request a second
+  finally { coverBusy = false; }
+  coverDone += todo.length; const t = keyOf(new Date());
+  store.update(s => { const media = { ...s.media }; for (const [id, url] of Object.entries(found)) if (media[id] && !media[id].cover) media[id] = { ...media[id], ...(url ? { cover: url } : {}), coverTried: t, at: Date.now() }; return { ...s, media }; }, { silent: document.querySelector('.sheet-bg, .story, .search') ? true : false });
+  coversSoon(1500);
+}
+ctx.findCovers = () => { coverDone = 0; coversSoon(100); };
 /** Steam syncs on its own at most every 6 hours (only with the relay and a Steam profile set). */
 function steamDue() { const st = S().meta?.steam; return !!(S().meta?.relay && st?.id && st.last && Date.now() - (st.at || 0) > 6 * 3600000); }
 
@@ -615,6 +632,7 @@ function renderMore() {
   out.push(h('div', { class: 'card' }, h('div', { class: 'title' }, 'Backup and data'),
     h('div', { class: 'row wrap' },
       h('button', { class: 'btn', onClick: () => IU.importSheet() }, '⇣ Import lists'),
+      CZ.custom(s).look.covers ? h('button', { class: 'btn', title: 'Look for covers for every title without one', onClick: () => { const n = CV.needing(S()).length; if (!n) return toast('Every title has a cover (or was tried this month)'); ctx.findCovers(); toast(`Looking for ${n} cover${n === 1 ? '' : 's'} in the background`, 'ok'); } }, '🖼 Find covers') : null,
       M.needsEnglish(s).length ? h('button', { class: 'btn', onClick: () => IU.englishOffer() }, `🌐 English titles (${M.needsEnglish(s).length})`) : null,
       h('button', { class: 'btn', onClick: downloadBackup }, '⬇ Backup'),
       (() => { const inp = h('input', { type: 'file', accept: '.json,application/json', style: { display: 'none' }, onChange: async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; let j; try { j = JSON.parse(await f.text()); } catch { return toast(`${f.name} is not a backup file (it isn’t JSON)`, 'err'); } if (MIG.looksLikeCitrus(j)) { migrationOffered = false; offerMigration(j, f.name); return; } restoreSheet(j, { source: f.name }); } }); return h('span', {}, inp, h('button', { class: 'btn', title: 'A Sudachi backup, or a Citrus backup to bring the Library over', onClick: () => inp.click() }, '⬆ Restore')); })(),

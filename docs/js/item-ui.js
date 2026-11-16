@@ -3,6 +3,7 @@
 import { h, toast, keyOf, fmtDate, fromKey, fmtDur } from './util.js';
 import * as M from './media.js';
 import * as C from './catalog.js';
+import * as CV from './covers.js';
 import { tierOf } from './tiers.js';
 import { ctx, S, up, field, pick, confirmBtn, undoToast } from './bits.js';
 import { coverEl, tierBadge, tierPicker, progressText, bar } from './ui.js';
@@ -58,7 +59,7 @@ export function openItem(id) {
           ['From', `${M.SRC_NAME[m.src] || m.src}${m.extId ? ` · ${m.extId}` : ''}`]].filter(Boolean).flatMap(([a, b]) => [h('b', {}, a), h('span', {}, String(b))]))),
       h('div', { class: 'card' }, h('div', { class: 'title' }, 'Note'), h('textarea', { class: 'note', rows: 3, 'data-nodirty': '1', placeholder: 'What you thought (only here, never sent to Citrus)', value: m.review || '', onChange: (e) => { up(s => M.updateMedia(s, id, { review: e.target.value })); toast('Saved', 'ok'); } })),
       (m.kind === 'book' || m.kind === 'manga') ? quotesCard(m, paint) : null,
-      h('div', { class: 'row wrap sh-foot' }, h('button', { class: 'btn ghost', onClick: () => { close(); editSheet(id); } }, '✎ Edit details'), h('span', { class: 'grow' }),
+      h('div', { class: 'row wrap sh-foot' }, h('button', { class: 'btn ghost', onClick: () => { close(); editSheet(id); } }, '✎ Edit details'), h('button', { class: 'btn ghost', onClick: () => coverSheet(id) }, '🖼 Cover'), h('span', { class: 'grow' }),
         confirmBtn('Delete', () => { const before = S(); up(s => M.deleteMedia(s, id)); close(); undoToast(`Deleted ${M.shown(m)}`, before); })));
   };
   paint();
@@ -68,6 +69,18 @@ function quotesCard(m, again) {
   return h('div', { class: 'card' }, h('div', { class: 'title' }, `Quotes${m.quotes?.length ? ` (${m.quotes.length})` : ''}`),
     ...(m.quotes || []).slice().reverse().slice(0, 12).map(q => h('div', { class: 'quote' }, h('div', { class: 'small' }, `“${q.t}”`), h('div', { class: 'tiny dim' }, [q.p ? `p. ${q.p}` : '', dmy(q.d)].filter(Boolean).join(' · '), h('button', { class: 'btn sm ghost', 'aria-label': 'Remove quote', onClick: () => { up(s => M.removeQuote(s, m.id, q.id)); again(); } }, '✕')))),
     inp, h('button', { class: 'btn sm', style: { marginTop: '6px' }, onClick: () => { if (!inp.value.trim()) return; up(s => M.addQuote(s, m.id, { text: inp.value, page: m.progress || 0 })); again(); } }, '＋ Keep it'));
+}
+
+/** Pick a cover: every candidate the catalogues offer, your own address, or back to the sticker. */
+export function coverSheet(id) {
+  const m = S().media?.[id]; if (!m) return;
+  const grid = h('div', { class: 'cv-pick' }, h('div', { class: 'tiny dim' }, navigator.onLine ? 'Looking in the catalogues…' : 'Offline: connect to look for covers.'));
+  const url = h('input', { type: 'url', placeholder: 'Or paste an image address (https://…)', 'aria-label': 'Cover image address', value: m.cover || '' });
+  const set = (u) => { const before = S(); up(s => M.updateMedia(s, id, { cover: u, coverTried: keyOf(new Date()) })); close(); undoToast(u ? 'Cover saved' : 'Back to the sticker', before); };
+  const { close } = ctx.sheet([h('h2', {}, `Cover for ${M.shown(m)}`), h('div', { class: 'tiny dim' }, 'Only the address is saved; the picture loads from the site.'), grid, field('', url),
+    h('div', { class: 'row wrap sh-foot' }, h('button', { class: 'btn primary', onClick: () => { const u = url.value.trim(); if (u && !/^https:\/\//.test(u)) return toast('An https:// address, please', 'err'); set(u); } }, 'Use this address'), m.cover ? h('button', { class: 'btn ghost', onClick: () => set('') }, 'Use the sticker') : null)]);
+  if (navigator.onLine) CV.candidates(m).then(list => { if (!list.length) { grid.replaceChildren(h('div', { class: 'tiny dim' }, 'Nothing found. Check the title and year in Edit details, or paste an address.')); return; }
+    grid.replaceChildren(...list.map(c => { const b = h('button', { type: 'button', class: `cv-opt ${c.url === m.cover ? 'on' : ''}`, title: `${c.from}${c.note ? `: ${c.note}` : ''}`, onClick: () => set(c.url) }, h('img', { src: c.url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onError: () => b.remove() }), h('small', {}, c.from)); return b; })); }).catch(() => grid.replaceChildren(h('div', { class: 'tiny dim' }, 'The catalogues did not answer.')));
 }
 
 /** Finishing: date (today), your tier, flags, a note. */

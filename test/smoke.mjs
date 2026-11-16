@@ -19,7 +19,7 @@ for (const [w, hgt, time, ui] of [[390, 844, '2026-11-16T19:30:00+03:00', 'sudac
   console.log(`${w}px at ${time.slice(5, 16)} (${ui})`);
   const { p, ctx, errors } = await page(browser, { width: w, height: hgt, time, seed: state, shifts });
   await p.addInitScript((u) => localStorage.setItem('sudachi.ui', JSON.stringify({ ui: u, size: 'normal' })), ui);
-  await p.route(/anilist|openlibrary|googleapis\.com\/books|wikidata|steamstatic|musicbrainz|coverartarchive/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await p.route(/anilist|openlibrary|googleapis\.com\/books|wikidata|wikipedia|steamstatic|musicbrainz|coverartarchive/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await p.goto(url); await sleep(600);
   for (const t of TABS) {
     if (t === 'more') await p.click('#btnMore'); else await p.click(`nav.tabs button[data-view=${t}]`);
@@ -38,6 +38,7 @@ for (const [w, hgt, time, ui] of [[390, 844, '2026-11-16T19:30:00+03:00', 'sudac
   if (time.startsWith('2026-11-14')) check(/Day off/.test(today), 'Today knows it is a day off');
   if (time.startsWith('2026-11-16')) check(/Still on these/.test(today) && /Test Quest/.test(today), 'still on this? for the old game');
   await sheetCheck(() => p.click('#view-today .shelf .pc-hit >> nth=0'), 'item sheet');
+  await p.click('#view-today .shelf .pc-hit >> nth=0'); await sleep(300); await sheetCheck(() => p.click('.sheet button:has-text("Cover")'), 'cover sheet');
   // +1 episode on the shelf
   const before = (await state0(p)).media.a1.progress;
   const plus = p.locator('#view-today .shelf .pc:has-text("Test Sky Garden") button:has-text("+1 ep")');

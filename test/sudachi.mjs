@@ -126,5 +126,14 @@ check(mg.media.a1.progress === 6 && mg.media.f2.score === 8 && !mg.media.g3 && m
 check(CZ.custom({ settings: { custom: { kinds: { hidden: ['anime', 'show', 'movie', 'manga', 'book', 'game', 'album'] } } } }).kinds.hidden.length === 6, 'Customise never hides every kind');
 check(RL.validRelay('https://script.google.com/macros/s/AKfy-123_x/exec') && !RL.validRelay('https://evil.example/exec') && RL.RELAY_SCRIPT.includes('function doGet') && RL.RELAY_SCRIPT.includes('/^\\d{17}$/'), 'relay: only Apps Script addresses, the script is complete');
 
+console.log('covers');
+const CV = await import('../docs/js/covers.js');
+const nd = CV.needing(clone(fixture), '2026-11-16'); check(nd.length > 5 && nd[0].status === 'doing' && !nd.some(m => m.cover), `titles waiting for a cover: ${nd.length}, shelf first`);
+const tried = clone(fixture); tried.media.f2.coverTried = '2026-11-10'; tried.media.f4.coverTried = '2026-09-01';
+const nd2 = CV.needing(tried, '2026-11-16'); check(!nd2.some(m => m.id === 'f2') && nd2.some(m => m.id === 'f4'), 'tried this month: skipped; tried over 30 days ago: again');
+const sc = await CV.candidates({ kind: 'game', src: 'steam', extId: '440', title: 'x' }); check(sc[0].url.includes('/440/header.jpg'), 'Steam games use their header image, no look-up');
+globalThis.fetch = async (u) => ({ ok: true, json: async () => /wikipedia/.test(u) ? { query: { pages: { 1: { index: 1, title: 'Le Film Test', thumbnail: { source: 'https://upload.example/poster.jpg' } } } } } : {} });
+check(await CV.findCover({ kind: 'movie', title: 'Le Film Test', year: 2019 }, { check: async () => true }) === 'https://upload.example/poster.jpg', 'a film finds its poster on Wikipedia');
+
 console.log(bad() ? `\n${bad()} FAILED` : '\nall passed');
 process.exit(bad() ? 1 : 0);

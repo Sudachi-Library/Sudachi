@@ -41,7 +41,7 @@ export function makeRecord(f, now = Date.now()) {
     cover: f.cover ? safeUrl(f.cover) : '', src: f.src || 'manual', extId: f.extId ? String(f.extId) : '', malId: malIdOf(f), format: ['paper', 'ebook', 'audio'].includes(f.format) ? f.format : '',
     log: Array.isArray(f.log) ? f.log.slice(-500) : [], plays: Array.isArray(f.plays) ? f.plays.slice(-50) : [], quotes: Array.isArray(f.quotes) ? f.quotes.slice(-100) : [],
     startedAt: f.startedAt || '', finishedAt: f.finishedAt || '', droppedAt: f.droppedAt || '', minutes: Math.max(0, +f.minutes || 0), runtime: Math.max(0, Math.min(900, +f.runtime || 0)), length: Math.max(0, Math.min(2000, +f.length || 0)),
-    review: String(f.review || '').slice(0, 2000), pub: Math.max(0, Math.min(10, +f.pub || 0)), enChecked: !!f.enChecked, triage: ['want', 'someday', 'no'].includes(f.triage) ? f.triage : '', nudged: f.nudged || '',
+    review: String(f.review || '').slice(0, 2000), pub: Math.max(0, Math.min(10, +f.pub || 0)), enChecked: !!f.enChecked, triage: ['want', 'someday', 'no'].includes(f.triage) ? f.triage : '', nudged: f.nudged || '', coverTried: f.coverTried || '',
     ach: f.ach && typeof f.ach === 'object' ? { done: +f.ach.done || 0, total: +f.ach.total || 0 } : null, createdAt: f.createdAt || now, at: now };
   if (m.status === 'done' && !m.finishedAt && !IMPORTED.has(m.src)) m.finishedAt = today();   // imports without a date stay undated rather than becoming "today"
   if (m.status === 'doing' && !m.startedAt && !IMPORTED.has(m.src)) m.startedAt = today();

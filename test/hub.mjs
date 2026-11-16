@@ -27,7 +27,7 @@ async function device(label, { width = 390 } = {}) {
   const p = await ctx.newPage(); p.errors = [];
   p.on('pageerror', e => p.errors.push(e.message));
   await p.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, body: '' }));
-  await p.route(/anilist|openlibrary|wikidata|steamstatic|musicbrainz|coverartarchive/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await p.route(/anilist|openlibrary|googleapis\.com\/books|wikidata|wikipedia|steamstatic|musicbrainz|coverartarchive/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await p.clock.install({ time: new Date('2026-11-16T19:30:00+03:00') });
   await p.addInitScript(() => { if (!localStorage.getItem('sudachi.google')) localStorage.setItem('sudachi.google', JSON.stringify({ access_token: 'tok', exp: Date.now() + 3600e3, email: 'tester@example.com' })); });
   await p.goto(url); await p.waitForSelector('#view-today.active'); p.label = label;

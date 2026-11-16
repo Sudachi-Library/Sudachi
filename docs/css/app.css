@@ -1168,3 +1168,6 @@ details.card > summary b::after { content: " ▾"; color: var(--dim); }
 :root[data-ui="arcade"] :is(.rs-head h2, .pk-t, .wk-big, .rv-label, .it-title, .lib-head h1, .tier) { font-family: var(--pixel); }
 /* albums are square, like a sleeve */
 .cover.k-album { aspect-ratio: 1 / 1; } .cover.md.k-album { width: 110px; } .cover.lg.k-album { width: 140px; }
+.cv-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; margin: 10px 0; }
+.cv-opt { display: flex; flex-direction: column; gap: 4px; align-items: center; padding: 4px; border-radius: 10px; border: 2px solid transparent; }
+.cv-opt img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 6px; background: var(--card2); } .cv-opt small { font-size: 10.5px; color: var(--muted); } .cv-opt.on { border-color: var(--acc); }

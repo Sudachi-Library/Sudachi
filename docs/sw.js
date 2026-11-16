@@ -1,12 +1,12 @@
 // Sudachi service worker: precached app shell, network-first with a short timeout, Google Fonts cached for offline.
-const CACHE = 'sudachi-bd2c78f829';
+const CACHE = 'sudachi-d051ba3fb2';
 const FONTS = 'sudachi-fonts-v1';   // kept across releases: font files are immutable, no need to fetch them again
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Permanent+Marker&family=Pixelify+Sans:wght@500;700&family=JetBrains+Mono:wght@500;700&display=swap';
 // Without these the app cannot start offline: install fails (and the old worker stays) if one is missing.
 const CORE = ['./', './index.html', './css/app.css', './js/app.js', './js/util.js', './manifest.webmanifest'];
 // Everything else in docs/js (scripts-bump.sh writes it from the folder). Fetched one by one so a
 // file that was renamed or merged away does not block the install; it just is not cached.
-const JS = ['backlog-ui','backup-check','bits','catalog','custom','day','google','hub','import-ui','item-ui','library-ui','media','migrate','picks','relay','review-ui','review','roster','store-alerts','store','tiers','today-ui','ui'];
+const JS = ['backlog-ui','backup-check','bits','catalog','covers','custom','day','google','hub','import-ui','item-ui','library-ui','media','migrate','picks','relay','review-ui','review','roster','store-alerts','store','tiers','today-ui','ui'];
 const ASSETS = [...JS.map(f => `./js/${f}.js`), './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-512-maskable.png'];
 const NET_TIMEOUT = 2500;   // on weak signal ("lie-fi") serve the cached shell after 2.5 s instead of hanging on the fetch
 
