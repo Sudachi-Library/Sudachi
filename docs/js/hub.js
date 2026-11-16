@@ -10,7 +10,7 @@ import * as R from './roster.js';
 export const SITE_URL = 'https://sudachi-library.github.io/Sudachi/';
 export const CONTRACT = 2;
 
-const counts = (w) => ({ eps: w.eps, films: w.films, books: w.books, chapters: w.ch, pages: w.pages, games: w.games, hours: Math.round(w.minutes / 6) / 10, played: Math.round(w.gameMinutes / 6) / 10, finished: w.finished.length });
+const counts = (w) => ({ eps: w.eps, films: w.films, books: w.books, albums: w.albums, chapters: w.ch, pages: w.pages, games: w.games, hours: Math.round(w.minutes / 6) / 10, played: Math.round(w.gameMinutes / 6) / 10, finished: w.finished.length });
 /** status.json for Citrus (HUB.md v2). */
 export function buildStatus(s, now = new Date()) {
   const t = keyOf(now), wk = M.thisWeek(s, now), mo = M.thisMonth(s, now), shelf = M.nowPlaying(s), old = M.stale(s, now), pick = P.pickToday(s, now), goals = M.goalsProgress(s, now);
@@ -19,6 +19,7 @@ export function buildStatus(s, now = new Date()) {
   const metrics = [
     { key: 'eps-week', label: 'Episodes this week', value: wk.eps, unit: 'eps', date: t },
     { key: 'films-week', label: 'Films this week', value: wk.films, unit: 'films', date: t },
+    { key: 'albums-week', label: 'Albums this week', value: wk.albums, unit: 'albums', date: t },
     { key: 'hours-week', label: 'Hours this week', value: Math.round(wk.minutes / 6) / 10, unit: 'h', date: t },
     { key: 'played-week', label: 'Hours played this week', value: Math.round(wk.gameMinutes / 6) / 10, unit: 'h', date: t },
     { key: 'finished-month', label: 'Finished this month', value: mo.finished.length, unit: 'titles', date: t },
@@ -46,7 +47,7 @@ export function buildStatus(s, now = new Date()) {
       week: counts(wk), month: counts(mo),
       now: shelf.slice(0, 6).map(m => ({ kind: m.kind, title: M.shown(m), progress: m.progress || 0, total: m.total || 0 })),
       pick: pick ? { kind: pick.kind, title: pick.title, why: pick.why, minutes: pick.minutes, label: pick.label } : null,
-      goals: Object.fromEntries(goals.map(g => [g.kind === 'movie' ? 'films' : g.kind === 'book' ? 'books' : g.kind, { done: g.done, target: g.target, ...(g.aimId ? { aimId: g.aimId } : {}) }])),
+      goals: Object.fromEntries(goals.map(g => [g.kind === 'movie' ? 'films' : g.kind === 'book' ? 'books' : g.kind === 'album' ? 'albums' : g.kind, { done: g.done, target: g.target, ...(g.aimId ? { aimId: g.aimId } : {}) }])),
       roster: R.has() ? R.updatedAt() : null,
     },
   };

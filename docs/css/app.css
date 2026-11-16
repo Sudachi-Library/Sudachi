@@ -1166,3 +1166,5 @@ details.card > summary b::after { content: " ▾"; color: var(--dim); }
 /* Arcade / Clean / Paper keep the family look: no tilt, no tape */
 :root:is([data-ui="arcade"], [data-ui="clean"], [data-ui="paper"]) .cv-tape { display: none; }
 :root[data-ui="arcade"] :is(.rs-head h2, .pk-t, .wk-big, .rv-label, .it-title, .lib-head h1, .tier) { font-family: var(--pixel); }
+/* albums are square, like a sleeve */
+.cover.k-album { aspect-ratio: 1 / 1; } .cover.md.k-album { width: 110px; } .cover.lg.k-album { width: 140px; }

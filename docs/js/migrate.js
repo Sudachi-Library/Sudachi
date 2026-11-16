@@ -45,7 +45,7 @@ export function applyMigration(local, citrus, { source = 'citrus' } = {}) {
   conv.state.migrated = { from: source, at: Date.now(), counts };
   return { state: conv.state, counts, changed: true, sites: conv.sites };
 }
-const ORDER = [['titles', 'title'], ['book', 'book'], ['movie', 'film'], ['show', 'series', 'series'], ['anime', 'anime', 'anime'], ['manga', 'comic'], ['game', 'game']];
+const ORDER = [['titles', 'title'], ['book', 'book'], ['movie', 'film'], ['show', 'series', 'series'], ['anime', 'anime', 'anime'], ['manga', 'comic'], ['game', 'game'], ['album', 'album']];
 /** "412 titles: 120 books · 200 films · 60 anime" for the confirmation and the toast. */
 export function describe(counts) {
   if (!counts?.titles) return 'nothing from the Library';

@@ -37,6 +37,8 @@ export const state = {
     rec({ id: 'g2', kind: 'game', title: 'Unplayed Test Game', status: 'planned', src: 'steam', extId: '222', minutes: 0 }),
     rec({ id: 'g3', kind: 'game', title: 'Barely Played Test', status: 'planned', src: 'steam', extId: '333', minutes: 40 }),
     rec({ id: 's2', kind: 'show', title: 'Test Detectives', status: 'planned', runtime: 50, genres: ['Crime', 'Drama'], triage: 'want' }),
+    rec({ id: 'al1', kind: 'album', title: 'Test Neon Record', creator: 'Test Band', status: 'done', score: 9, total: 10, runtime: 42, genres: ['Synth-pop'], finishedAt: '2026-11-13', flags: { comfort: true } }),
+    rec({ id: 'al2', kind: 'album', title: 'Test Quiet Album', creator: 'Test Singer', status: 'planned', total: 9, runtime: 38, genres: ['Ambient'], triage: 'want' }),
     rec({ id: 'a3', kind: 'anime', title: 'Comfort Test Rewatch', status: 'done', score: 9, total: 12, runtime: 24, finishedAt: '2026-06-10', flags: { comfort: true, rewatch: true } }),
   ]),
   deleted: {}, stamps: {}, migrated: { from: 'skipped', at, counts: {} }, settings: {},

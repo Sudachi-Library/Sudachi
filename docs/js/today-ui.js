@@ -11,7 +11,7 @@ import { coverEl, posterCard, row, progressText, tierBadge, empty, sticker } fro
 import { finishSheet, addSheet, logSheet } from './item-ui.js';
 
 const rt = { pickAt: 0, disc: null, discBusy: false };
-const STEP = { show: 1, anime: 1, manga: 1, book: 10, game: 1 }, STEP_L = { show: '+1 ep', anime: '+1 ep', manga: '+1 ch', book: '+10 p', game: '+1 h' };
+const STEP = { show: 1, anime: 1, manga: 1, book: 10, game: 1, album: 1 }, STEP_L = { show: '+1 ep', anime: '+1 ep', manga: '+1 ch', book: '+10 p', game: '+1 h', album: '+1 track' };
 
 function actions() {
   return h('div', { class: 'qbar' }, h('button', { class: 'btn primary', onClick: logSheet }, '✚ Log'), h('button', { class: 'btn', onClick: () => addSheet() }, '＋ Add'), h('button', { class: 'btn', onClick: () => ctx.go('backlog', 'dump') }, '🧠 Brain dump'));

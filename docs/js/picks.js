@@ -30,6 +30,7 @@ const lenH = (m) => m.kind === 'game' ? (m.length || 0) : 0;
 export function sitting(m, budget) {
   const per = M.perUnit(m), left = m.total ? Math.max(0, m.total - (m.progress || 0)) : 0;
   if (m.kind === 'movie') return { minutes: m.runtime || per, label: fmtDur(m.runtime || per), units: 1 };
+  if (m.kind === 'album') { const mins = m.runtime || (m.total || 10) * per; return { minutes: mins, label: `the album · ${fmtDur(mins)}`, units: m.total || 1 }; }
   if (m.kind === 'show' || m.kind === 'anime') { const n = Math.max(1, Math.min(left || 99, Math.floor(budget / per) || 1)); return { minutes: n * per, label: `${n} ep${n > 1 ? 's' : ''} · ${fmtDur(n * per)}`, units: n }; }
   if (m.kind === 'book') { const pages = Math.max(10, Math.round(Math.min(budget, 60) / per / 5) * 5); return { minutes: Math.round(pages * per), label: `${Math.min(pages, left || pages)} pages`, units: pages }; }
   if (m.kind === 'manga') { const n = Math.max(1, Math.min(left || 99, Math.floor(Math.min(budget, 60) / per))); return { minutes: n * per, label: `${n} ch`, units: n }; }
@@ -48,6 +49,7 @@ function fit(m, day, base, source) {
   }
   if (m.kind === 'book') sc += size === 'long' ? 0.4 : size === 'short' ? 0.2 : 0.3;
   if (m.kind === 'manga') sc += size === 'short' ? 0.5 : 0.2;
+  if (m.kind === 'album') { const mins = m.runtime || (m.total || 10) * per; if (mins > day.min + 30) return -Infinity; sc += size === 'short' ? 0.6 : 0.4; }   // an album fits a commute, a wind-down, a chore
   if (m.flags?.comfort) sc += day.comfort;
   return sc;
 }

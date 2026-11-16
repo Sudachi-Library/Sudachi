@@ -3,7 +3,7 @@
 export const TABS = [['today', 'Today'], ['library', 'Library'], ['backlog', 'Backlog'], ['review', 'Review']];
 export const ROWS = [['shelf', 'On the shelf'], ['pick', 'Pick for today'], ['week', 'This week'], ['nudge', 'Still on this?'], ['up', 'Up next'], ['comfort', 'Comfort picks'], ['discover', 'Discover'], ['goals', 'Goals']];
 export const ACCENTS = [['sudachi', 'Sudachi lime', '#b8f03c'], ['pink', 'Hot pink', '#ff2e88'], ['cyan', 'Electric cyan', '#21d4fd'], ['orange', 'Citrus orange', '#ff7a1a'], ['violet', 'Violet', '#a77bff']];
-export const KIND_IDS = ['anime', 'show', 'movie', 'manga', 'book', 'game'];
+export const KIND_IDS = ['anime', 'show', 'movie', 'manga', 'book', 'game', 'album'];
 export const DEFAULTS = {
   start: 'today',
   tabs: { hidden: [], order: TABS.map(t => t[0]) },

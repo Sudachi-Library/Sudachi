@@ -38,11 +38,12 @@ export function progressText(m) {
   const k = M.kindOf(m.kind), p = m.progress || 0;
   if (m.kind === 'game') { const hrs = Math.round((m.minutes || p * 60) / 6) / 10; return hrs ? `${hrs % 1 ? hrs.toFixed(1) : hrs}h played${m.ach?.total ? ` · ${m.ach.done}/${m.ach.total} 🏆` : ''}` : ''; }
   if (m.kind === 'movie') return m.runtime ? `${m.runtime} min` : '';
+  if (m.kind === 'album' && m.status !== 'doing') return [m.total ? `${m.total} tracks` : '', m.runtime ? `${m.runtime} min` : ''].filter(Boolean).join(' · ');
   if (!p && !m.total) return '';
-  const lab = m.kind === 'book' ? 'p.' : m.kind === 'manga' ? 'Ch' : 'Ep';
+  const lab = m.kind === 'book' ? 'p.' : m.kind === 'manga' ? 'Ch' : m.kind === 'album' ? 'Track' : 'Ep';
   return `${lab} ${p}${m.total ? ` / ${m.total}` : ''}`;
 }
-export const pct = (m) => m.total && m.kind !== 'game' ? Math.max(0, Math.min(100, Math.round((m.progress || 0) / m.total * 100))) : null;
+export const pct = (m) => m.total && m.kind !== 'game' && m.status !== 'done' ? Math.max(0, Math.min(100, Math.round((m.progress || 0) / m.total * 100))) : null;
 export function bar(m) { const p = pct(m); return p == null ? null : h('div', { class: 'pbar', role: 'progressbar', 'aria-valuenow': String(p), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-label': 'Progress' }, h('i', { style: { width: `${p}%` } })); }
 /** A poster card for a streaming row. sub: a line under the title; extra: a node (a button) at the bottom. */
 export function posterCard(m, { sub = '', extra = null, onClick = null } = {}) {

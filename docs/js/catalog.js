@@ -154,5 +154,15 @@ export async function searchWikidata(q, kind) {
 export async function searchAny(q, kind) {
   if (kind === 'anime' || kind === 'manga') return searchAnime(q, kind);
   if (kind === 'book') return searchBooks(q);
+  if (kind === 'album') return searchAlbums(q);
   return searchWikidata(q, kind);
+}
+
+// ───────────────────────────── albums: MusicBrainz (free, CORS, no key) with covers from the Cover Art Archive
+export async function searchAlbums(q) {
+  const r = await fetch(`https://musicbrainz.org/ws/2/release-group/?query=${encodeURIComponent(q)}&type=album&limit=8&fmt=json`, { headers: { Accept: 'application/json' } });
+  if (!r.ok) throw new Error(`MusicBrainz ${r.status}`);
+  const j = await r.json();
+  return (j['release-groups'] || []).map(g => ({ kind: 'album', title: g.title, creator: (g['artist-credit'] || []).map(a => (a.name || a.artist?.name || '') + (a.joinphrase || '')).join('').trim().slice(0, 100), year: +String(g['first-release-date'] || '').slice(0, 4) || 0,
+    cover: `https://coverartarchive.org/release-group/${g.id}/front-250`, genres: (g.tags || []).sort((a, b) => b.count - a.count).map(t => t.name).slice(0, 4), src: 'musicbrainz', extId: g.id, note: g['primary-type'] || '' }));
 }

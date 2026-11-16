@@ -9,7 +9,7 @@ import { coverEl, tierBadge, tierPicker, progressText, bar } from './ui.js';
 
 const today = () => keyOf(new Date());
 const dmy = (k) => k ? fmtDate(fromKey(k)) : '';
-const STEPS = { show: [[1, '+1 ep'], [3, '+3']], anime: [[1, '+1 ep'], [3, '+3']], manga: [[1, '+1 ch'], [5, '+5']], book: [[10, '+10 p'], [30, '+30']], game: [[0.5, '+30 min'], [1, '+1 h'], [2, '+2 h']] };
+const STEPS = { show: [[1, '+1 ep'], [3, '+3']], anime: [[1, '+1 ep'], [3, '+3']], manga: [[1, '+1 ch'], [5, '+5']], book: [[10, '+10 p'], [30, '+30']], game: [[0.5, '+30 min'], [1, '+1 h'], [2, '+2 h']], album: [[1, '+1 track'], [5, '+5']] };
 /** Flags: ♥ comfort, ↻ rewatchable, would recommend (separate from how much you enjoyed it). */
 export function flagsEl(flags, onChange) {
   const f = { comfort: !!flags?.comfort, rewatch: !!flags?.rewatch, recommend: flags?.recommend || '' };
@@ -93,8 +93,8 @@ export function finishSheet(id) {
 export function addSheet(prefill = {}) {
   let kind = prefill.kind || 'movie', status = prefill.status || 'planned', score = 0, chosen = null, timer = null;
   const title = h('input', { type: 'text', placeholder: 'Title', value: prefill.title || '', 'aria-label': 'Title', autocomplete: 'off' });
-  const creator = h('input', { type: 'text', placeholder: 'Author / director / studio (optional)', 'aria-label': 'Creator' });
-  const total = h('input', { type: 'number', min: '0', placeholder: 'Episodes / pages / chapters', 'aria-label': 'Total', class: 'num' });
+  const creator = h('input', { type: 'text', placeholder: 'Author / director / studio / artist (optional)', 'aria-label': 'Creator' });
+  const total = h('input', { type: 'number', min: '0', placeholder: 'Episodes / pages / chapters / tracks', 'aria-label': 'Total', class: 'num' });
   const results = h('div', { class: 'lookup' }), tierBox = h('div', {});
   const look = () => { clearTimeout(timer); const q = title.value.trim(); chosen = null; if (q.length < 3 || !navigator.onLine) { results.replaceChildren(); return; }
     timer = setTimeout(async () => { results.replaceChildren(h('div', { class: 'tiny dim' }, 'Looking it up…')); try { const list = await C.searchAny(q, kind); if (title.value.trim() !== q) return;
@@ -131,8 +131,8 @@ export function editSheet(id) {
     field('Kind', pick(M.KINDS.map(k => [k.id, `${k.emoji} ${k.name}`, k.color]), kind, (v) => { kind = v; })),
     field('Status', pick(Object.entries(M.STATUS), status, (v) => { status = v; })),
     field('Title', f.title), h('div', { class: 'grid2' }, field('Original-language title', f.orig), field('English title', f.en)), h('div', { class: 'tiny dim' }, 'With both, Sudachi shows “Original (English)”.'),
-    field('By', f.creator), h('div', { class: 'grid2' }, field('Year', f.year), field(m.kind === 'game' ? 'Hours played (Steam fills it)' : 'Episodes / pages / chapters', f.total)),
-    h('div', { class: 'grid2' }, field(m.kind === 'movie' ? 'Runtime (min)' : 'Minutes per episode', f.runtime), field('Hours to finish (games)', f.length)),
+    field('By', f.creator), h('div', { class: 'grid2' }, field('Year', f.year), field(m.kind === 'game' ? 'Hours played (Steam fills it)' : m.kind === 'album' ? 'Tracks' : 'Episodes / pages / chapters', f.total)),
+    h('div', { class: 'grid2' }, field(m.kind === 'movie' || m.kind === 'album' ? 'Running time (min)' : 'Minutes per episode', f.runtime), field('Hours to finish (games)', f.length)),
     h('div', { class: 'grid2' }, field('Started', f.startedAt), field('Finished', f.finishedAt)),
     field('Genres (comma between)', f.genres), field('Cover image address', f.cover),
     h('div', { class: 'row wrap sh-foot' }, h('button', { class: 'btn primary grow', onClick: () => {

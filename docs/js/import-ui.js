@@ -12,6 +12,7 @@ const SOURCES = [
   ['imdb', '🎬', 'IMDb', 'Ratings, watchlist or a dropped list (.csv)'],
   ['goodreads', '📚', 'Goodreads', 'Library export (.csv)'],
   ['mal', '🍥', 'MyAnimeList', 'Your public list, or the export (.xml / .xml.gz)'],
+  ['rym', '💿', 'RateYourMusic', 'Your rated albums (.csv)'],
   ['steam', '🎮', 'Steam', 'Games, hours played, achievements'],
 ];
 export function importSheet(which = '') {
@@ -30,6 +31,10 @@ function sourceSheet(id) {
   } else if (id === 'goodreads') {
     parts.push(h('h2', {}, '📚 Goodreads'), h('ol', { class: 'small steps' }, h('li', {}, 'goodreads.com › My Books › Import and export (at the bottom of the left column).'), h('li', {}, 'Export library, wait a moment, then download the .csv.')),
       h('div', { class: 'row wrap sh-foot' }, fileBtn('.csv,text/csv', 'Choose the .csv', (t, name) => { const r = M.parseExport(t); if (r.error) return toast(r.error, 'err'); preview(r, name); })));
+  } else if (id === 'rym') {
+    parts.push(h('h2', {}, '💿 RateYourMusic'), h('ol', { class: 'small steps' }, h('li', {}, 'rateyourmusic.com › your profile › scroll to the bottom › Export your data.'), h('li', {}, 'Choose the .csv here. Rated albums go to Heard, the rest to the backlog.')),
+      h('div', { class: 'tiny dim' }, 'No RYM? Add albums by hand: ＋ Add › Albums looks them up on MusicBrainz, with covers.'),
+      h('div', { class: 'row wrap sh-foot' }, fileBtn('.csv,text/csv,.txt', 'Choose the .csv', (t, name) => { const r = M.parseExport(t); if (r.error) return toast(r.error, 'err'); preview(r, name); })));
   } else if (id === 'mal') {
     const user = h('input', { type: 'text', value: S().meta?.mal?.user || '', placeholder: 'Your MyAnimeList username', 'aria-label': 'MyAnimeList username', autocomplete: 'off' });
     parts.push(h('h2', {}, '🍥 MyAnimeList'), h('div', { class: 'small muted' }, 'Straight from your list, no file needed: Sudachi asks your relay, which reads your public anime and manga lists.'),

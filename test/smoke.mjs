@@ -19,7 +19,7 @@ for (const [w, hgt, time, ui] of [[390, 844, '2026-11-16T19:30:00+03:00', 'sudac
   console.log(`${w}px at ${time.slice(5, 16)} (${ui})`);
   const { p, ctx, errors } = await page(browser, { width: w, height: hgt, time, seed: state, shifts });
   await p.addInitScript((u) => localStorage.setItem('sudachi.ui', JSON.stringify({ ui: u, size: 'normal' })), ui);
-  await p.route(/anilist|openlibrary|googleapis\.com\/books|wikidata|steamstatic/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await p.route(/anilist|openlibrary|googleapis\.com\/books|wikidata|steamstatic|musicbrainz|coverartarchive/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await p.goto(url); await sleep(600);
   for (const t of TABS) {
     if (t === 'more') await p.click('#btnMore'); else await p.click(`nav.tabs button[data-view=${t}]`);
@@ -57,6 +57,7 @@ for (const [w, hgt, time, ui] of [[390, 844, '2026-11-16T19:30:00+03:00', 'sudac
   await p.fill('#view-library .lib-search', ''); await sleep(200);
   await p.click('#view-library .seg[aria-label=View] button[aria-label=List]'); await sleep(200); await clean(p, '#view-library', 'library list'); await p.screenshot({ path: `${shots}/${w}-${ui}-library-list.png`, fullPage: true });
   await p.click('#view-library .kc:has-text("Books")'); await sleep(200); check((await p.locator('#view-library .lrow').count()) === 3, 'books filter: 3 books');
+  await p.click('#view-library .kc:has-text("Albums")'); await sleep(200); check((await p.locator('#view-library .lrow').count()) === 2 && /Heard/.test(await p.locator('#view-library').innerText()), 'albums filter: 2 albums, Heard');
   await p.click('#view-library .kc >> nth=0'); await p.click('#view-library .seg[aria-label=View] button[aria-label="Poster wall"]'); await sleep(200);
   // Backlog: brain dump + Steam pile
   await tab('backlog');

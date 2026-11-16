@@ -51,6 +51,10 @@ const later = sp.items.map(i => i.title === 'Test Now' ? { ...i, minutes: 780 } 
 const dd = M.steamDeltas(ss, later, Object.fromEntries(sp.items.map(i => [i.extId, i.minutes])), '2026-11-16');
 check(dd.played.length === 1 && dd.played[0].minutes === 180 && Object.values(dd.state.media).find(m => m.title === 'Test Now').log.at(-1).m === 180, 'time played since the last Steam sync becomes a session');
 
+const rym = M.parseExport('"RYM Album","First Name","Last Name","First Name localized","Last Name localized","Title","Release_Date","Rating","Ownership","Purchase Date","Media Type","Review"\n"101","Test","Band","","","Test Neon Record","2019","9","","","",""\n"102","","Testers","","","Test B-Sides","2021","0","","","",""');
+check(rym.source === 'RateYourMusic' && rym.items[0].kind === 'album' && rym.items[0].creator === 'Test Band' && rym.items[0].srcRating === 9 && rym.items[0].status === 'done' && rym.items[1].status === 'planned', 'RateYourMusic: albums, artist, rating, heard vs backlog');
+check(M.statusWord('album', 'doing') === 'Listening' && M.statusWord('album', 'done') === 'Heard', 'album words: Listening, Heard');
+
 console.log('the shelf');
 R.set(shifts);
 s = clone(fixture);
@@ -65,6 +69,7 @@ const old = M.stale(clone(fixture), new Date('2026-11-16T10:00:00+03:00')); chec
 check(M.stale(M.stillOn(clone(fixture), 'g1'), new Date()).length === 0, 'still on it: the nudge waits');
 
 console.log('brain dump');
+const ad2 = M.parseDump('album: Test LP by Test Artist\n💿 Another Test Album'); check(ad2[0].kind === 'album' && ad2[0].creator === 'Test Artist' && ad2[1].kind === 'album', 'brain dump: album: … by …, 💿');
 const dump = M.parseDump('Dune (book)\nfilm: Perfect Test\n🎮 Test Hades\nTest Frieren [anime]\nThe Test Bear - series\nTest Piranesi by Test Clarke\nTest Alien (1979)\n- Blank Test\nDune (book)\nTest Sky Garden [anime]', 'movie');
 check(dump.length === 9 && dump[0].kind === 'book' && dump[1].kind === 'movie' && dump[2].kind === 'game' && dump[3].kind === 'anime' && dump[4].kind === 'show' && dump[5].creator === 'Test Clarke' && dump[6].year === 1979 && dump[7].guessed, 'one per line, kinds from (book) film: 🎮 [anime] - series by (year), duplicates once');
 const ad = M.addDump(clone(fixture), dump); check(ad.added === 8 && ad.already.length === 1 && ad.already[0].id === 'a1', 'adds new ones to the backlog, leaves ones you have');
@@ -72,10 +77,11 @@ const ad = M.addDump(clone(fixture), dump); check(ad.added === 8 && ad.already.l
 console.log('week, picks, reviews');
 const now = new Date('2026-11-16T19:30:00+03:00'), wk = M.thisWeek(clone(fixture), now);
 check(wk.eps === 3 && M.countLine(wk).startsWith('3 eps'), `this week: ${M.countLine(wk)}`);
-const mo = M.thisMonth(clone(fixture), now); check(mo.films === 2 && mo.finished.length === 3, 'this month: 2 films, 3 finished');
+const mo = M.thisMonth(clone(fixture), now); check(mo.films === 2 && mo.albums === 1 && mo.finished.length === 4 && /1 album/.test(M.countLine(mo)), `this month: ${M.countLine(mo)}`);
 const p1 = P.picksFor(clone(fixture), new Date('2026-11-22T10:00:00+03:00'));
 check(p1.day.kind === 'postnight' && p1.picks.length && p1.picks.every(p => p.minutes <= 60) && !p1.picks.some(p => p.id === 'f3'), `after a night: short picks only (${p1.picks.map(p => p.title).slice(0, 3).join(', ')})`);
-check(['a1', 'a3', 'm1'].includes(p1.picks[0].id), 'after a night a comfort anime or manga comes first');
+check(['a1', 'a3', 'm1', 'al1'].includes(p1.picks[0].id), `after a night a comfort pick comes first (${p1.picks[0].title})`);
+check(P.picksFor(clone(fixture), new Date('2026-11-14T10:00:00+03:00')).picks.some(p => p.kind === 'album') || P.picksFor(clone(fixture), new Date('2026-11-14T10:00:00+03:00'), { kinds: ['album'] }).picks[0]?.id === 'al2', 'albums can be picked');
 const p2 = P.picksFor(clone(fixture), new Date('2026-11-14T10:00:00+03:00'));
 check(p2.day.kind === 'off' && p2.picks.some(p => p.kind === 'movie' || p.kind === 'game'), `day off: a film or a long session fits (${p2.picks.slice(0, 3).map(p => p.title).join(', ')})`);
 const p3 = P.picksFor(clone(fixture), new Date('2026-11-17T21:00:00+03:00'));
@@ -83,7 +89,7 @@ check(p3.day.kind === 'day' && !p3.picks.some(p => p.id === 'f3') && !p3.picks.s
 const p4 = P.picksFor(clone(fixture), new Date('2026-11-18T12:00:00+03:00'));
 check(!p4.picks.some(p => p.kind === 'game' && p.source === 'backlog' && (clone(fixture).media[p.id].length > 30)), 'nothing huge before a night stretch');
 const rv = RV.review(clone(fixture), '2026-11', now);
-check(rv.n === 3 && rv.top?.id === 'f1' && rv.dropped.length === 1 && rv.label === 'November 2026', `November: ${rv.n} finished, best ${rv.top?.title}, 1 dropped`);
+check(rv.n === 4 && rv.top?.id === 'f1' && rv.dropped.length === 1 && rv.label === 'November 2026', `November: ${rv.n} finished, best ${rv.top?.title}, 1 dropped`);
 const sl = RV.story(rv); check(sl[0].id === 'open' && sl.at(-1).id === 'end' && sl.some(x => x.id === 'top') && sl.every(x => !/undefined|NaN/.test(JSON.stringify(x))), `story: ${sl.length} slides, no undefined/NaN`);
 const yr = RV.review(clone(fixture), '2026', now); check(yr.kind === 'year' && yr.months.length === 12 && RV.story(yr).some(x => x.poster), 'year review with months and the poster slide');
 check(RV.periodsWithData(clone(fixture), 'month')[0] === '2026-11', 'periods with data, newest first');
@@ -117,7 +123,7 @@ function at2(n) { return Date.parse('2026-11-16T00:00:00Z') + n; }
 delete B.media.g3;
 const mg = store.mergeStates(A, B);
 check(mg.media.a1.progress === 6 && mg.media.f2.score === 8 && !mg.media.g3 && mg.meta.goals.book === 15, 'two devices: edits on both sides survive, a delete holds, meta follows its edit time');
-check(CZ.custom({ settings: { custom: { kinds: { hidden: ['anime', 'show', 'movie', 'manga', 'book', 'game'] } } } }).kinds.hidden.length === 5, 'Customise never hides every kind');
+check(CZ.custom({ settings: { custom: { kinds: { hidden: ['anime', 'show', 'movie', 'manga', 'book', 'game', 'album'] } } } }).kinds.hidden.length === 6, 'Customise never hides every kind');
 check(RL.validRelay('https://script.google.com/macros/s/AKfy-123_x/exec') && !RL.validRelay('https://evil.example/exec') && RL.RELAY_SCRIPT.includes('function doGet') && RL.RELAY_SCRIPT.includes('/^\\d{17}$/'), 'relay: only Apps Script addresses, the script is complete');
 
 console.log(bad() ? `\n${bad()} FAILED` : '\nall passed');

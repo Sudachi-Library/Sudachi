@@ -1,6 +1,6 @@
 # Sudachi — notes for Claude
 
-- Owner's app: the media logger — books, comics & manga, games, anime, films, series. Split from Citrus Maxima (Amaerys/citrus-maxima) on 16/11/2026, the last of the split (after Mandarin, Clementine, Calamansi, Bergamot). Plain English in the UI, dates dd/mm/yyyy, the week starts on Sunday.
+- Owner's app: the media logger — books, comics & manga, games, anime, films, series, music albums. Split from Citrus Maxima (Amaerys/citrus-maxima) on 16/11/2026, the last of the split (after Mandarin, Clementine, Calamansi, Bergamot). Plain English in the UI, dates dd/mm/yyyy, the week starts on Sunday.
 - Product decisions live in the Citrus Maxima project: `claude/sudachi-plan.md` (look, logging, backlog, tiers, reviews) and `claude/sudachi-handoff.md`.
 - One data owner per kind: all media (titles, status, tiers, progress, log, plays, quotes, backlog, yearly media goals) → Sudachi. Shifts → Mandarin (`hub/mandarin/shifts.json`, read by `roster.js`, kinds of day by `day.js`). Aims → Citrus Plan (`hub/citrus/plan.json › goals.aims`; a media goal can link to one). Never write into another app's Drive folder.
 - Drive: writes `My Apps/hub/sudachi/{state,status}.json` and `backups/`. Reads shifts, plan.json, and once `hub/citrus/state.json` (the Library migration, with Undo and a before-migration backup).

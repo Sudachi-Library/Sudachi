@@ -14,15 +14,17 @@ export const KINDS = [
   { id: 'manga', name: 'Comics & manga', one: 'comic', emoji: '🗯', color: '#c47bff', unit: 'ch', units: 'ch', per: 8 },
   { id: 'book', name: 'Books', one: 'book', emoji: '📚', color: '#b8f03c', unit: 'p', units: 'pages', per: 1.5 },
   { id: 'game', name: 'Games', one: 'game', emoji: '🎮', color: '#21d4fd', unit: 'h', units: 'h', per: 60 },
+  { id: 'album', name: 'Albums', one: 'album', emoji: '💿', color: '#ff7a1a', unit: 'track', units: 'tracks', per: 4 },
 ];
 const READ = (k) => k === 'book' || k === 'manga';
 export const kindOf = (id) => KINDS.find(k => k.id === id) || KINDS[0];
 export const STATUS = { planned: 'Backlog', doing: 'On the shelf', done: 'Finished', paused: 'On hold', dropped: 'Dropped' };
-export const statusWord = (kind, st) => ({ planned: READ(kind) ? 'Want to read' : kind === 'game' ? 'Backlog' : 'Want to watch', doing: READ(kind) ? 'Reading' : kind === 'game' ? 'Playing' : 'Watching', done: READ(kind) ? 'Read' : kind === 'game' ? 'Played' : 'Watched', paused: 'On hold', dropped: 'Dropped' }[st] || st);
+const HEAR = (k) => k === 'album';
+export const statusWord = (kind, st) => ({ planned: READ(kind) ? 'Want to read' : HEAR(kind) ? 'Want to hear' : kind === 'game' ? 'Backlog' : 'Want to watch', doing: READ(kind) ? 'Reading' : HEAR(kind) ? 'Listening' : kind === 'game' ? 'Playing' : 'Watching', done: READ(kind) ? 'Read' : HEAR(kind) ? 'Heard' : kind === 'game' ? 'Played' : 'Watched', paused: 'On hold', dropped: 'Dropped' }[st] || st);
 export const norm = (t) => String(t || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9؀-ۿ぀-ヿ一-鿿]+/g, ' ').trim();
 const lc = (x) => String(x || '').toLowerCase().trim();
-export const IMPORTED = new Set(['goodreads', 'imdb', 'anilist', 'steam', 'mal', 'citrus']);
-export const SRC_NAME = { goodreads: 'Goodreads', imdb: 'IMDb', mal: 'MyAnimeList', anilist: 'AniList', steam: 'Steam', manual: 'you', citrus: 'Citrus', dump: 'brain dump', openlibrary: 'Open Library', googlebooks: 'Google Books' };
+export const IMPORTED = new Set(['goodreads', 'imdb', 'anilist', 'steam', 'mal', 'citrus', 'rym']);
+export const SRC_NAME = { goodreads: 'Goodreads', imdb: 'IMDb', rym: 'RateYourMusic', musicbrainz: 'MusicBrainz', mal: 'MyAnimeList', anilist: 'AniList', steam: 'Steam', manual: 'you', citrus: 'Citrus', dump: 'brain dump', openlibrary: 'Open Library', googlebooks: 'Google Books' };
 
 // ───────────────────────────── records
 /** The MyAnimeList id of an anime/manga: MAL rows carry it as extId, AniList rows as idMal. It is how the two recognise the same work. */
@@ -135,7 +137,7 @@ function foldTwin(a, b) {
 
 // ───────────────────────────── the shelf: progress, finishing, again, "still on this?"
 /** Minutes one unit of progress takes (an episode, a chapter, a page, an hour of play). */
-export function perUnit(m) { const k = kindOf(m.kind); if (m.kind === 'show' || m.kind === 'anime') return m.runtime && m.runtime < 120 ? m.runtime : k.per; if (m.kind === 'movie') return m.runtime || k.per; return k.per; }
+export function perUnit(m) { const k = kindOf(m.kind); if (m.kind === 'album') return m.runtime && m.total ? Math.max(1, Math.round(m.runtime / m.total)) : k.per; if (m.kind === 'show' || m.kind === 'anime') return m.runtime && m.runtime < 120 ? m.runtime : k.per; if (m.kind === 'movie') return m.runtime || k.per; return k.per; }
 /** Move progress on: +n units (episodes, chapters, pages, hours) or to `to`. Logged for the week counts.
  *  Reaching the total finishes it (except games: playing more never "finishes" a game). → { state, finished } */
 export function logProgress(s, id, { n = 0, to = null, minutes = null, date = '' } = {}) {
@@ -170,7 +172,7 @@ export function again(s, id) {
 export const finishesOf = (m) => [...(m.plays || []).map((p, i) => ({ d: p.d || '', score: p.score || 0, again: i > 0 })), ...(m.status === 'done' ? [{ d: m.finishedAt || '', score: m.score || 0, again: (m.plays || []).length > 0 }] : [])];
 /** The last day anything happened on a record. */
 export const lastActivity = (m) => [m.startedAt || '', m.nudged || '', ...(m.log || []).map(x => x.d)].sort().pop() || (m.createdAt ? keyOf(new Date(m.createdAt)) : '');
-export const STALE_DAYS = { game: 45, book: 30, manga: 30, anime: 21, show: 30, movie: 7 };
+export const STALE_DAYS = { game: 45, book: 30, manga: 30, anime: 21, show: 30, movie: 7, album: 14 };
 /** On the shelf but untouched for a long while: a gentle "still on this?" (never a nag: once per stretch). */
 export function stale(s, now = new Date()) {
   const t = keyOf(now);
@@ -186,7 +188,7 @@ export const nowPlaying = (s) => rec(s.media).filter(m => m.status === 'doing').
 export const backlog = (s, kinds = null) => rec(s.media).filter(m => m.status === 'planned' && m.triage !== 'no' && (!kinds || kinds.includes(m.kind)));
 export const toTriage = (s) => rec(s.media).filter(m => m.status === 'planned' && m.src === 'steam' && !m.triage).sort((a, b) => (b.minutes || 0) - (a.minutes || 0) || a.title.localeCompare(b.title));
 export const triage = (s, id, t) => updateMedia(s, id, { triage: t });
-const KIND_WORDS = { anime: /^(anime|🍥)$/i, show: /^(series|show|tv|📺)$/i, movie: /^(film|movie|🎬)$/i, manga: /^(manga|comic|comics|manhwa|🗯)$/i, book: /^(book|novel|📚)$/i, game: /^(game|🎮)$/i };
+const KIND_WORDS = { anime: /^(anime|🍥)$/i, show: /^(series|show|tv|📺)$/i, movie: /^(film|movie|🎬)$/i, manga: /^(manga|comic|comics|manhwa|🗯)$/i, book: /^(book|novel|📚)$/i, game: /^(game|🎮)$/i, album: /^(album|music|lp|ep|record|vinyl|💿|🎵|🎶)$/i };
 const kindWord = (w) => Object.entries(KIND_WORDS).find(([, re]) => re.test(String(w).trim()))?.[0] || '';
 /** The brain dump: one title per line, any kind. "Dune (book)", "film: Perfect Days", "🎮 Hades", "Frieren [anime]",
  *  "The Bear - series", "Piranesi by Susanna Clarke", "Alien (1979)". Lines without a kind take `fallback`. → [{kind, title, creator, year, guessed}] */
@@ -221,6 +223,7 @@ export function minutesOf(m) {
   const k = m.kind, fin = finishesOf(m).length;
   if (k === 'game') return m.minutes || Math.round((m.progress || 0) * 60);
   if (k === 'movie') return (m.runtime || kindOf(k).per) * Math.max(1, fin) * (m.status === 'done' || fin ? 1 : 0);
+  if (k === 'album' && !(m.log || []).length) return (m.runtime || (m.total || 10) * kindOf(k).per) * fin;
   const logged = (m.log || []).reduce((a, x) => a + (x.m || 0), 0);
   if (logged) return logged;
   const units = (m.status === 'done' ? (m.total || m.progress || 0) : (m.progress || 0)) + (m.plays || []).length * (m.total || 0);
@@ -229,18 +232,18 @@ export function minutesOf(m) {
 /** What happened between two day keys (inclusive): episodes, chapters, pages, hours from the log; films, books and the rest
  *  finished. → { eps, ch, pages, films, books, games, finished[], minutes, hours, byKind, days:Set } */
 export function between(s, from, to) {
-  const out = { eps: 0, ch: 0, pages: 0, films: 0, books: 0, games: 0, shows: 0, anime: 0, manga: 0, finished: [], minutes: 0, hours: 0, byKind: Object.fromEntries(KINDS.map(k => [k.id, 0])), days: new Set(), gameMinutes: 0 };
+  const out = { eps: 0, ch: 0, pages: 0, films: 0, books: 0, games: 0, shows: 0, anime: 0, manga: 0, albums: 0, tracks: 0, finished: [], minutes: 0, hours: 0, byKind: Object.fromEntries(KINDS.map(k => [k.id, 0])), days: new Set(), gameMinutes: 0 };
   for (const m of rec(s.media)) {
     for (const x of m.log || []) {
       if (!x.d || x.d < from || x.d > to) continue;
       const n = +x.n || 0; out.days.add(x.d); out.minutes += +x.m || 0;
-      if (m.kind === 'show' || m.kind === 'anime') out.eps += Math.max(0, n); else if (m.kind === 'manga') out.ch += Math.max(0, n); else if (m.kind === 'book') out.pages += Math.max(0, n); else if (m.kind === 'game') out.gameMinutes += +x.m || 0;
+      if (m.kind === 'show' || m.kind === 'anime') out.eps += Math.max(0, n); else if (m.kind === 'manga') out.ch += Math.max(0, n); else if (m.kind === 'book') out.pages += Math.max(0, n); else if (m.kind === 'game') out.gameMinutes += +x.m || 0; else if (m.kind === 'album') out.tracks += Math.max(0, n);
     }
     for (const f of finishesOf(m)) {
       if (!f.d || f.d < from || f.d > to) continue;
       out.finished.push({ ...m, finishedOn: f.d, finishScore: f.score, again: f.again }); out.byKind[m.kind]++; out.days.add(f.d);
       if (m.kind === 'movie') { out.films++; out.minutes += m.runtime || kindOf('movie').per; }
-      else if (m.kind === 'book') out.books++; else if (m.kind === 'game') out.games++; else if (m.kind === 'show') out.shows++; else if (m.kind === 'anime') out.anime++; else out.manga++;
+      else if (m.kind === 'book') out.books++; else if (m.kind === 'game') out.games++; else if (m.kind === 'show') out.shows++; else if (m.kind === 'anime') out.anime++; else if (m.kind === 'album') { out.albums++; out.minutes += m.runtime || (m.total || 10) * kindOf('album').per; } else out.manga++;
     }
   }
   out.hours = Math.round(out.minutes / 6) / 10;
@@ -255,7 +258,7 @@ export const thisMonth = (s, now = new Date()) => between(s, `${keyOf(now).slice
 export function countLine(w) {
   const p = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`, bits = [];
   if (w.eps) bits.push(p(w.eps, 'ep')); if (w.films) bits.push(p(w.films, 'film')); if (w.books) bits.push(p(w.books, 'book')); if (w.ch) bits.push(`${w.ch} ch`);
-  if (w.pages && !w.books) bits.push(`${w.pages} pages`); if (w.games) bits.push(p(w.games, 'game') + ' done');
+  if (w.pages && !w.books) bits.push(`${w.pages} pages`); if (w.albums) bits.push(p(w.albums, 'album')); if (w.games) bits.push(p(w.games, 'game') + ' done');
   const gh = Math.round(w.gameMinutes / 6) / 10; if (gh >= 0.5) bits.push(`${gh % 1 ? gh.toFixed(1) : gh}h played`);
   return bits.join(' · ');
 }
@@ -265,7 +268,7 @@ export function setMeta(s, patch) { return { ...s, meta: { ...(s.meta || {}), ..
 export function setGoal(s, kind, n, aimId) { const g = { ...(s.meta?.goals || {}) }; g[kind] = Math.max(0, Math.min(5000, +n || 0)); const aims = { ...(s.meta?.goalAims || {}) }; if (aimId !== undefined) { if (aimId) aims[kind] = aimId; else delete aims[kind]; } return setMeta(s, { goals: g, goalAims: aims }); }
 export function goalsProgress(s, now = new Date()) {
   const y = String(now.getFullYear()), g = s.meta?.goals || {}, done = between(s, `${y}-01-01`, `${y}-12-31`), doy = Math.floor((startOfDay(now) - new Date(now.getFullYear(), 0, 0)) / 86400000);
-  const count = { book: done.books, movie: done.films, game: done.games, anime: done.anime, show: done.shows, manga: done.manga, all: done.finished.length };
+  const count = { book: done.books, movie: done.films, game: done.games, anime: done.anime, show: done.shows, manga: done.manga, album: done.albums, all: done.finished.length };
   return Object.entries(g).filter(([, n]) => n > 0).map(([k, target]) => ({ kind: k, target, done: count[k] || 0, expected: Math.round(target * doy / 365 * 10) / 10, aimId: s.meta?.goalAims?.[k] || '' }));
 }
 
@@ -324,6 +327,11 @@ export function parseExport(text, { mode = 'auto' } = {}) {
   if (/^\s*[[{]/.test(head)) { try { const j = JSON.parse(text); if (j?.response?.games || j?.steam) return parseSteam(text); if (Array.isArray(j) && j[0]?.anime_title) return parseMALList({ anime: j }); if (Array.isArray(j) && j[0]?.manga_title) return parseMALList({ manga: j }); if (j?.mal) return parseMALList(j.mal); } catch {} }
   const rows = parseCSV(text); if (!rows.length) return { error: 'That file has no rows.' };
   const cols = Object.keys(rows[0]);
+  if (cols.includes('RYM Album') && cols.includes('Title')) {   // RateYourMusic › your profile › Export your data (ratings are 1–10, half stars ×2)
+    const items = rows.filter(r => r.Title).map(r => { const artist = [r['First Name'], r['Last Name']].filter(Boolean).join(' ').trim(), rated = +r.Rating || 0, y = +String(r.Release_Date || '').slice(0, 4) || 0;
+      return { kind: 'album', title: r.Title.trim(), creator: artist.slice(0, 100), year: y, status: rated ? 'done' : 'planned', srcRating: rated, srcScale: 10, review: r.Review || '', src: 'rym', extId: String(r['RYM Album'] || '') }; });
+    return { source: 'RateYourMusic', items };
+  }
   if (cols.includes('Exclusive Shelf') && cols.includes('Title')) {
     const items = rows.filter(r => r.Title).map(r => {
       const shelf = r['Exclusive Shelf'], stars = +r['My Rating'] || 0, isbn = unExcel(r.ISBN13 || r.ISBN);
@@ -342,7 +350,7 @@ export function parseExport(text, { mode = 'auto' } = {}) {
     });
     return { source: 'IMDb', items };
   }
-  return { error: 'Not recognised. Use the Goodreads library export, an IMDb ratings / watchlist / list export, a MyAnimeList export (.xml or .xml.gz) or a Steam games list.' };
+  return { error: 'Not recognised. Use the Goodreads library export, an IMDb ratings / watchlist / list export, a RateYourMusic export, a MyAnimeList export (.xml or .xml.gz) or a Steam games list.' };
 }
 const steamCover = (id) => `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/header.jpg`;
 /** One owned game → a record. Steam says what you own and how long you played, not whether you finished:
