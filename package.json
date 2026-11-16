@@ -1,0 +1,11 @@
+{
+  "name": "sudachi",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Sudachi \u2014 the media logger of the citrus family: a shelf, shift-aware picks, S\u2013F tiers, a brain-dump backlog and a month/year in review. A PWA with no build step.",
+  "scripts": {
+    "test": "bash test/all.sh",
+    "bump": "sh scripts-bump.sh"
+  }
+}
