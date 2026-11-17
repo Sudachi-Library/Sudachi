@@ -237,7 +237,7 @@ export function knownFolderIds() { return { ...ids }; }
 /** Check every cached folder id again on next use (a full sync does this). */
 export function reverify() { verified.clear(); }
 /** Forget every cached id (a watched folder was deleted or moved): paths are looked up again, created if missing. */
-export function forgetFolders() { ids = {}; persistIds(); verified.clear(); seenState = null; }
+export function forgetFolders() { ids = {}; persistIds(); verified.clear(); seenState = null; for (const k of Object.keys(tagCache)) delete tagCache[k]; }
 
 const FIELDS = 'id,name,mimeType,createdTime,modifiedTime,size,md5Checksum,appProperties,parents,trashed';
 async function list(parentId, { name, folders, extra, all } = {}) {
@@ -374,21 +374,65 @@ export async function changesSince(tokenStr, maxPages = 20) {
 
 // ════════════════════════════════════════ the hub
 export const APP = 'sudachi';
-const P = (root) => ({ hub: [root, 'hub'], me: [root, 'hub', APP], backups: [root, 'hub', APP, 'backups'], other: (app) => [root, 'hub', app] });
+// Folders are found by their tag, never by path (claude/drive-layout.md, 17/11/2026): every app folder carries
+// appProperties.citrusApp = "<id>", so Citrus can move and rename it under Citrus/… and Sudachi still finds it. Only when nothing
+// is tagged yet does Sudachi fall back to the old path (My Apps/hub/<id>); its own folder is then created there if missing and
+// tagged at once. Sudachi never renames or moves a folder, and never creates one by path once a tagged one exists anywhere.
+const P = (root) => ({ hub: [root, 'hub'], other: (app) => [root, 'hub', app] });
+export const TAG = 'citrusApp';
+const tagCache = {};   // app → folder id (or null), checked once per app session
+const tagInflight = new Map();
+/** The folder tagged citrusApp=<app> (the oldest when there are several), or null. */
+export function findTagged(app) {
+  if (app in tagCache) return Promise.resolve(tagCache[app]);
+  if (tagInflight.has(app)) return tagInflight.get(app);
+  const p = (async () => {
+    const cached = ids[`tag:${app}`];
+    if (cached && await exists(cached)) { const f = await fileMeta(cached, 'id,appProperties,trashed').catch(() => null); if (f && !f.trashed && f.appProperties?.[TAG] === app) return (tagCache[app] = cached); }
+    const qs = new URLSearchParams({ q: `mimeType = '${FOLDER}' and trashed = false and appProperties has { key='${TAG}' and value='${q(app)}' }`, fields: 'files(id,name,parents,createdTime)', spaces: 'drive', pageSize: '20' });
+    const j = await gfetch(`${DRIVE}/files?${qs}`);
+    const pick = (j.files || []).sort((a, b) => (a.createdTime || '').localeCompare(b.createdTime || ''))[0];
+    if (pick) { ids[`tag:${app}`] = pick.id; verified.add(pick.id); } else delete ids[`tag:${app}`];
+    persistIds();
+    return (tagCache[app] = pick ? pick.id : null);
+  })().finally(() => tagInflight.delete(app));
+  tagInflight.set(app, p); return p;
+}
+async function tagFolder(id, app) { await gfetch(`${DRIVE}/files/${encodeURIComponent(id)}?fields=id`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appProperties: { [TAG]: app } }) }); ids[`tag:${app}`] = id; persistIds(); tagCache[app] = id; }
+/** A folder by tag; else the old path. own: create it there if missing and tag it. */
+export async function folderOf(root, app, { own = false } = {}) {
+  const t = await findTagged(app); if (t) return t;
+  const id = await ensurePath(P(root).other(app), { create: own });
+  if (id && own) await tagFolder(id, app).catch(e => console.warn('tag', e.message));
+  return id || null;
+}
+const meDir = (root) => folderOf(root, APP, { own: true });
+/** A sub-folder (backups) inside a folder found by id, created when asked. */
+async function childFolder(parentId, name, create = true) {
+  const key = `child:${parentId}/${name}`;
+  if (ids[key] && await exists(ids[key])) return ids[key];
+  const found = (await list(parentId, { name, folders: true })).sort((a, b) => (a.createdTime || '').localeCompare(b.createdTime || ''))[0];
+  const id = found ? found.id : create ? await mkdir(name, parentId) : null;
+  if (id) { ids[key] = id; verified.add(id); persistIds(); }
+  return id;
+}
+const backupsDir = async (root, create = true) => { const me = await meDir(root); return childFolder(me, 'backups', create); };
+/** Whether Sudachi found its own folder by tag this session (for status.json › drive). */
+export const ownTagged = () => !!tagCache[APP];
 
 /** Folder ids Sudachi watches in the changes feed: its own folder, and the folders of the apps it reads (Mandarin, Citrus). */
 export async function watchedFolders(root) {
-  const [hub, me] = await Promise.all([ensurePath(P(root).hub), ensurePath(P(root).me)]);
-  const [mandarin, citrus] = await Promise.all([ensurePath(P(root).other('mandarin'), { create: false }), ensurePath(P(root).other('citrus'), { create: false })]);
-  return { hub, me, mandarin: mandarin || '', citrus: citrus || '' };
+  const [me, mandarin, citrus] = await Promise.all([meDir(root), folderOf(root, 'mandarin'), folderOf(root, 'citrus')]);
+  const hub = await ensurePath(P(root).hub, { create: false }).catch(() => null);
+  return { hub: hub || '', me, mandarin: mandarin || '', citrus: citrus || '' };
 }
 
-/** Sudachi's small public file in hub/sudachi: status.json (what Citrus shows). */
-export async function writeOwnFile(root, name, obj, { omit = ['updatedAt'] } = {}) { const dir = await ensurePath(P(root).me); return putJson(dir, name, obj, { omit, healTwins: true }); }
+/** Sudachi's small public file in its own folder: status.json (what Citrus shows). */
+export async function writeOwnFile(root, name, obj, { omit = ['updatedAt'] } = {}) { const dir = await meDir(root); return putJson(dir, name, obj, { omit, healTwins: true }); }
 
-/** Another app's JSON file, read only: hub/<app>/<name>. null when it is not there. Twins are left alone (not ours to tidy). */
+/** Another app's JSON file, read only, from its tagged folder (or hub/<app>). null when it is not there. Twins are left alone (not ours to tidy). */
 export async function readOtherFile(root, app, name) {
-  const dir = await ensurePath(P(root).other(app), { create: false }); if (!dir) return null;
+  const dir = await folderOf(root, app); if (!dir) return null;
   const { file } = await findFile(dir, name); if (!file) return null;
   const data = await readJsonFile(file);
   return data && typeof data === 'object' ? { data, modifiedTime: file.modifiedTime, id: file.id } : null;
@@ -397,7 +441,7 @@ export async function readOtherFile(root, app, name) {
 // ── Sudachi's own state: read with its revision, written only if nobody else wrote it since
 let seenState = null;   // {id, rev, modifiedTime} of the state.json we last read or wrote
 export async function loadRemoteState(root) {
-  const dir = await ensurePath(P(root).me);
+  const dir = await meDir(root);
   const { file, twins } = await findFile(dir, 'state.json');
   if (!file) { seenState = null; return null; }
   for (const t of twins) trash(t.id).catch(() => {});
@@ -422,7 +466,7 @@ export async function remoteStateMoved() {
   catch (e) { if (e.status === 404) return true; throw e; }
 }
 export async function saveRemoteState(root, state, { force = false } = {}) {
-  const dir = await ensurePath(P(root).me);
+  const dir = await meDir(root);
   if (!force && await remoteStateMoved()) { const e = new GoogleError('Another device saved first.', { status: 409 }); e.conflict = true; throw e; }
   const rev = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 7)}`;
   const r = await putJson(dir, 'state.json', state, { props: { rev }, fileId: seenState?.id || null, always: force });
@@ -433,7 +477,7 @@ export function seenStateRev() { return seenState?.rev || ''; }
 
 // ── daily backups of state.json: hub/sudachi/backups/state-YYYY-MM-DD.json, the newest 14 kept
 export async function backupDaily(root, state, dayKey) {
-  const dir = await ensurePath(P(root).backups);
+  const dir = await backupsDir(root);
   const name = `state-${dayKey}.json`, size = JSON.stringify(state).length;
   // today's copy is taken again when the data has grown a lot since (the first sync of day one was an empty 717 B: beta T5-07)
   const had = +ids[`backup:${name}`] || 0;
@@ -450,12 +494,12 @@ export async function backupDaily(root, state, dayKey) {
 }
 /** A copy kept just before a risky step (migration, restore, replace): hub/sudachi/backups/state-YYYY-MM-DD-before-<what>.json. */
 export async function backupBefore(root, state, what) {
-  const dir = await ensurePath(P(root).backups);
+  const dir = await backupsDir(root);
   const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
   await putJson(dir, `state-${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-before-${what}-${p2(d.getHours())}${p2(d.getMinutes())}.json`, state);
 }
 export async function listBackups(root) {
-  const dir = await ensurePath(P(root).backups, { create: false }); if (!dir) return [];
+  const dir = await backupsDir(root, false); if (!dir) return [];
   return (await list(dir, { extra: "name contains 'state-'" })).sort((a, b) => b.name.localeCompare(a.name)).map(f => ({ id: f.id, name: f.name, date: f.name.slice(6, 16), size: +f.size || 0 }));
 }
 export async function readBackup(id) { return readJsonFile({ id }); }

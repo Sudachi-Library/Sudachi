@@ -101,6 +101,7 @@ check(hb.contract === 2 && hb.app === 'sudachi' && /this week/.test(hb.summary) 
 check(!js.includes('made-up line worth keeping') && !js.includes('A private test note'), 'never notes or quotes in status.json');
 check(hb.pending.some(x => /Test Quest/.test(x)), 'pending: still on this?');
 check(hb.actions.map(a => a.id).join() === 'today,log,shelf,backlog,import,review', 'actions');
+check(hb.drive?.byTag === true, 'status.json says drive.byTag (claude/drive-layout.md)');
 
 console.log('Citrus migration');
 const cat = Date.parse('2026-11-01T10:00:00Z');

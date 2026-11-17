@@ -26,7 +26,7 @@ import * as CV from './covers.js';
 import { checkBackup, describeCounts } from './backup-check.js';
 import { h, toast, keyOf, fmtDate, pad2, DAY_NAMES, MONTHS, uid } from './util.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 const CITRUS_URL = 'https://amaerys.github.io/citrus-maxima/';
 const MANDARIN_URL = 'https://mandarin-work.github.io/Mandarin/';
 
@@ -326,7 +326,8 @@ function classifyChanges(changes, w) {
     if (par.includes(w.me) && c.name === 'state.json' && (c.props?.rev || '') !== G.seenStateRev()) plan.state = true;
     if (w.mandarin && par.includes(w.mandarin) && c.name === 'shifts.json') plan.hub = true;
     if (w.citrus && par.includes(w.citrus) && c.name === 'plan.json') plan.hub = true;
-    if (par.includes(w.hub) && c.mimeType === 'application/vnd.google-apps.folder' && (c.name === 'mandarin' || c.name === 'citrus') && c.id !== w.mandarin && c.id !== w.citrus) return null;   // a folder Sudachi reads appeared: full pass
+    const tag = c.props?.citrusApp;   // folders are found by tag: a tagged folder Sudachi uses that is new to it (or was re-tagged) means look again
+    if (c.mimeType === 'application/vnd.google-apps.folder' && ['sudachi', 'mandarin', 'citrus'].includes(tag) && c.id !== w[tag === 'sudachi' ? 'me' : tag]) { G.forgetFolders(); return null; }
   }
   return plan;
 }

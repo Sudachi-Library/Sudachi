@@ -76,9 +76,26 @@ const [ea, eb] = [await state(A.p), await state(B.p)];
 check(ea.media.nB && eb.media.nB, 'a title added on the desktop reaches the phone');
 check(!ea.media.cg1 && !eb.media.cg1, 'a title deleted on the phone stays deleted on both');
 check(eb.media.cb2.status === 'done' && eb.media.cb2.score === 9, 'a finish on the phone reaches the desktop');
+console.log('Drive layout: found by tag, then moved by Citrus');
+const sud = g.path(['My Apps', 'hub', 'sudachi'], false);
+check(g.files.get(sud)?.appProperties?.citrusApp === 'sudachi', 'Sudachi tagged its own folder (citrusApp=sudachi)');
+check(g.readJsonAt(['My Apps', 'hub', 'sudachi'], 'status.json')?.drive?.byTag === true, 'status.json says drive.byTag');
+// Citrus tags the folders it reads and moves them all under Citrus/, renamed (what organiseDrive does)
+const tagAndMove = (oldPath, app, newPath) => { const id = g.path(oldPath, false), f = g.files.get(id); f.appProperties = { ...(f.appProperties || {}), citrusApp: app }; f.parents = [g.path(newPath.slice(0, -1))]; f.name = newPath.at(-1); g.touch(f); return id; };
+tagAndMove(['My Apps', 'hub', 'sudachi'], 'sudachi', ['Citrus', 'Life', 'Media - Sudachi']);
+tagAndMove(['My Apps', 'hub', 'mandarin'], 'mandarin', ['Citrus', 'Work', 'Mandarin']);
+tagAndMove(['My Apps', 'hub', 'citrus'], 'citrus', ['Citrus', '00 Hub', 'Citrus']);
+await A.p.evaluate(() => { const w = window.__sudachi; w.store.update(s => w.M.addMedia(s, { id: 'afterMove', kind: 'book', title: 'Written after the move', status: 'planned' })); });
+await sync(A.p); await A.p.evaluate(() => window.__sudachi.publish()); await sleep(300);
+check(g.readJsonAt(['Citrus', 'Life', 'Media - Sudachi'], 'state.json')?.media?.afterMove, 'after the move the phone writes into the moved folder');
+const C = await device('fresh tablet', { width: 800 }); await sleep(400); await sync(C.p);
+const sc = await state(C.p);
+check(sc.media.afterMove && sc.media.cb1, 'a fresh device finds the moved folder by tag and has everything');
+check(await until(C.p, () => window.__sudachi.R.has()), 'and still reads Mandarin’s shifts from their new place');
+check(!g.path(['My Apps', 'hub', 'sudachi'], false), 'no My Apps/hub/sudachi is created again');
 const twins = g.tree().filter(l => /(status|state)\.json/.test(l) && !/backups|citrus|mandarin/.test(l));
 check(twins.length === new Set(twins).size, `no duplicate files (${twins.length})`);
-check(!A.p.errors.length && !B.p.errors.length, `no page errors${[...A.p.errors, ...B.p.errors].slice(0, 2).join(' | ')}`);
+check(!A.p.errors.length && !B.p.errors.length && !C.p.errors.length, `no page errors${[...A.p.errors, ...B.p.errors, ...C.p.errors].slice(0, 2).join(' | ')}`);
 await browser.close(); server.close();
 if (bad()) { console.log(`${bad()} hub check(s) FAILED`); process.exit(1); }
 console.log('all passed');

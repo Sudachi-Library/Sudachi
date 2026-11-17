@@ -43,6 +43,7 @@ export function buildStatus(s, now = new Date()) {
     today: { date: t, done: (wk.days?.has?.(t)) || false },
     next: pick ? { title: `${pick.title} (${pick.label})`.slice(0, 120), minutes: Math.min(240, pick.minutes || 30) } : null,
     asks: [], metrics, pending, inbox: [], actions,
+    drive: { byTag: true },   // claude/drive-layout.md: Sudachi finds its folders by tag, so Citrus may move them
     extra: {
       week: counts(wk), month: counts(mo),
       now: shelf.slice(0, 6).map(m => ({ kind: m.kind, title: M.shown(m), progress: m.progress || 0, total: m.total || 0 })),

@@ -40,6 +40,7 @@ export function createFakeGoogle({ email = 'tester@example.com' } = {}) {
     const par = /'([^']+)' in parents/.exec(q); if (par && !f.parents.includes(par[1])) return false;
     const nm = /name\s*=\s*'((?:[^'\\]|\\.)*)'/.exec(q); if (nm && f.name !== nm[1].replace(/\\'/g, "'")) return false;
     if (/mimeType\s*=\s*'application\/vnd\.google-apps\.folder'/.test(q) && !q.includes(' or ') && f.mimeType !== FOLDER) return false;
+    const ap = /appProperties has \{ key='([^']+)' and value='([^']+)' \}/.exec(q); if (ap && (f.appProperties || {})[ap[1]] !== ap[2]) return false;
     const nc = /name contains '([^']+)'/.exec(q);
     if (q.includes('spreadsheetml') || q.includes("contains '.xlsx'")) { if (!(f.mimeType.includes('spreadsheet') || /\.xlsx$/.test(f.name))) return false; }
     else if (nc && !f.name.includes(nc[1])) return false;
@@ -94,6 +95,7 @@ export function createFakeGoogle({ email = 'tester@example.com' } = {}) {
       if (rem) f.parents = f.parents.filter(x => !rem.split(',').includes(x));
       if (add) f.parents.push(...add.split(','));
       if (b.name) f.name = b.name;
+      if (b.appProperties) f.appProperties = { ...(f.appProperties || {}), ...b.appProperties };
       touch(f); return json(route, 200, { id: f.id });
     }
     if ((m = /^\/drive\/v3\/files\/([^/]+)\/export$/.exec(p))) { const f = files.get(m[1]); return f ? route.fulfill({ status: 200, body: f.content }) : json(route, 404, {}); }
