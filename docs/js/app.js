@@ -645,7 +645,7 @@ function cloudCard() {
   return h('div', { class: `card cloud t-${c.tone}` }, h('div', { class: 'title' }, 'Your data'),
     h('div', { class: 'cl-head' }, h('span', { class: 'cl-dot' }), h('div', {}, h('div', { class: 'cl-h' }, c.head), c.sub ? h('div', { class: 'small muted' }, c.sub) : null)),
     h('div', { class: 'cl-rows' },
-      row(store.persistence.ok, 'On this device', store.persistence.ok ? `${n.toLocaleString('en')} titles · ${dv.idb ? 'safe copy kept twice' : 'browser storage'} · ${Math.max(1, Math.round(store.persistence.bytes / 1024)).toLocaleString('en')} KB` : store.persistence.lastError),
+      row(store.persistence.ok, 'On this device', store.persistence.ok ? `${n.toLocaleString('en')} titles · ${dv.idb ? 'safe copy kept twice' : 'browser storage'} · ${Math.max(1, Math.round((store.device.bytes || store.persistence.bytes || JSON.stringify(s).length * 2) / 1024)).toLocaleString('en')} KB` : store.persistence.lastError),
       row(G.isSignedIn() ? !(rt.lastProblems || []).length : null, 'On your Drive', G.isSignedIn() ? `${G.ownTagged() ? 'Sudachi’s folder found by its tag' : 'Sudachi’s folder'} · 17 small files, only the changed ones are sent` : 'not connected'),
       row(G.isSignedIn() ? true : null, 'Backups', G.isSignedIn() ? 'one a day on Drive (the last 14), and one before every big change' : 'download one below'),
       row(true, 'Two devices at once', 'changes merge title by title; nothing is overwritten')),
