@@ -33,13 +33,16 @@ export class GoogleError extends Error {
   constructor(message, { status = 0, auth = false, retryable = false, network = false } = {}) { super(message); this.status = status; this.auth = auth; this.retryable = retryable; this.network = network; }
 }
 export const stats = { requests: 0, retries: 0, errors: 0, lastError: '', lastErrorAt: 0, skippedWrites: 0, bytesUp: 0, bytesDown: 0, healed: 0 };
-export const auth = { needsSignIn: false, lastError: '' };
+export const auth = { needsSignIn: false, lastError: '', lastEvent: '' };
 
 // ════════════════════════════════════════ token & sign-in
 let token = loadToken();
 let clientId = '';
 let tokenClient = null;
 let pending = null;            // {resolve, reject} of the request in flight
+let closeGrace = null;         // after a "window closed", how long a late token is still awaited
+const lateListeners = new Set();   // told when a token arrives with nothing waiting for it
+export function onLateToken(fn) { lateListeners.add(fn); return () => lateListeners.delete(fn); }
 const authListeners = new Set();
 
 function loadToken() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null'); } catch { return null; } }
@@ -75,21 +78,35 @@ export async function init(id) {
   tokenClient = window.google.accounts.oauth2.initTokenClient({
     client_id: clientId, scope: SCOPES, include_granted_scopes: true,
     callback: async (r) => {
-      const p = pending; pending = null; if (!p) return;
+      // a token is kept even when Google reported the window "closed" first (it can, on phones and installed apps: the
+      // window's closing is seen before its answer arrives). Dropping it here was the sign-in loop of 18/11/2026.
+      const p = pending; pending = null; clearTimeout(closeGrace);
+      auth.lastEvent = r.error ? `error: ${r.error}` : 'token';
+      if (r.access_token) {
+        const drive = window.google?.accounts?.oauth2?.hasGrantedAllScopes ? window.google.accounts.oauth2.hasGrantedAllScopes(r, 'https://www.googleapis.com/auth/drive') : true;
+        if (!drive) { auth.lastError = 'Drive was not allowed'; const e = new GoogleError('Google signed you in but did not allow Drive. Sign in again and tick the box for Google Drive.', { auth: true }); return p ? p.reject(e) : (auth.needsSignIn = true, authListeners.forEach(fn => fn(false))); }
+      }
+      if (!p && !r.access_token) return;
       if (r.error) { auth.lastError = r.error_description || r.error; return p.reject(new GoogleError(/interaction|login_required|consent/.test(r.error) ? 'Google needs you to sign in again.' : `Google sign-in: ${auth.lastError}`, { status: 401, auth: true })); }
       saveToken({ access_token: r.access_token, exp: Date.now() + (Number(r.expires_in) || 3600) * 1000 });
       auth.needsSignIn = false; auth.lastError = '';
       if (!token.email) { try { const u = await userInfo(); saveToken({ email: u.email || '' }); } catch {} }
-      p.resolve(token);
+      if (p) p.resolve(token); else for (const fn of lateListeners) try { fn(token); } catch {}
     },
     error_callback: (e) => {
-      const p = pending; pending = null; if (!p) return;
+      auth.lastEvent = `window: ${e?.type || 'error'}`;
+      if (!pending) return;
+      // "closed" can come before the answer: wait a little for the token before giving up (no second window is opened)
+      if (e?.type === 'popup_closed') { const p = pending; clearTimeout(closeGrace); closeGrace = setTimeout(() => { if (pending === p) { pending = null; p.reject(new GoogleError('Sign-in window closed before Google answered. Tap Sign in once more.', { auth: true })); } }, 8000); return; }
+      const p = pending; pending = null;
       p.reject(new GoogleError(e?.type === 'popup_closed' ? 'Sign-in window closed.' : e?.type === 'popup_failed_to_open' ? 'The browser blocked Google\'s window — tap again.' : `Google sign-in: ${e?.message || e?.type || 'failed'}`, { auth: true }));
     },
   });
   return true;
 }
 
+/** The token client is ready (Google's script loaded at start-up): a tap can open the window at once, inside the tap. */
+export const ready = () => !!tokenClient;
 /** Get a token. Must run inside a tap on phones. `renew`: the account already agreed, so no consent screen. */
 export function signIn({ renew = false } = {}) {
   if (pending) return pending.promise;

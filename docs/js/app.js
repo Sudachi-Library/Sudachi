@@ -26,7 +26,7 @@ import * as CV from './covers.js';
 import { checkBackup, describeCounts } from './backup-check.js';
 import { h, toast, keyOf, fmtDate, pad2, DAY_NAMES, MONTHS, uid } from './util.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.3.1';
 const CITRUS_URL = 'https://amaerys.github.io/citrus-maxima/';
 const MANDARIN_URL = 'https://mandarin-work.github.io/Mandarin/';
 
@@ -79,6 +79,7 @@ async function boot() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   const cid = S().settings.clientId;
   G.onAuthChange(() => { renderSync(); render(); });
+  G.onLateToken(() => { toast('Signed in', 'ok'); refreshAll(true, { full: true }); });   // Google answered after reporting its window closed
   G.renewOnTap(() => { render(); refreshAll(false); });   // the hourly token renews on your next tap (phones only allow Google's window inside a tap)
   if (cid && rt.online) {
     try { await G.init(cid); } catch (e) { console.warn(e); }
@@ -149,7 +150,7 @@ function handleIncoming() {
 function authBanner() {
   if (!G.auth.needsSignIn || !rt.online) return null;
   return h('div', { class: 'banner' }, h('span', { class: 'grow' }, 'Google needs a tap to reconnect — nothing is lost, sync resumes after.'),
-    h('button', { class: 'btn sm primary', onClick: async () => { try { await G.signIn({ renew: G.wasSignedIn() }); refreshAll(true); } catch (e) { try { await G.signIn(); refreshAll(true); } catch (e2) { toast(e2.message, 'err'); } } } }, 'Reconnect'));
+    h('button', { class: 'btn sm primary', onClick: async () => { try { await G.signIn({ renew: G.wasSignedIn() }); refreshAll(true); } catch (e) { toast(e.message, 'err'); } } }, 'Reconnect'));
 }
 /** "← Citrus" while you came from Citrus: one tap back, and Citrus toasts "Back from Sudachi" and refreshes its hub. */
 function backBar() {
@@ -593,6 +594,7 @@ function diagnosticsCard() {
   const s = S(), n = (f) => Object.values(s.media || {}).filter(f).length, conv = T.convertAll(s).sites;
   const rows = [
     ['Google', G.isSignedIn() ? `signed in as ${G.accountEmail() || s.google.email || '?'}` : G.wasSignedIn() ? 'session expired — tap Sign in' : 'not signed in'],
+    ['Last sign-in event', `${G.auth.lastEvent || 'none'}${G.auth.lastError ? ` · ${G.auth.lastError}` : ''}`],
     ['Session', G.isSignedIn() ? `${G.tokenMinutesLeft()} min left · renews on your next tap` : '—'],
     ['Last sync', s.google.lastSync ? `${new Date(s.google.lastSync).toLocaleString('en-GB')}${rt.syncMode ? ` · ${rt.syncMode}` : ''}${rt.lastSyncMs ? ` · ${(rt.lastSyncMs / 1000).toFixed(1)} s` : ''}` : 'never'],
     ['Drive requests', `${G.stats.requests} sent · ${G.stats.retries} retried · ${G.stats.errors} failed · ${G.stats.skippedWrites} unchanged writes skipped`],
@@ -619,7 +621,7 @@ function renderMore() {
   out.push(h('div', { class: 'card' }, h('div', { class: 'title' }, 'Google'),
     h('div', { class: 'small muted' }, 'Drive keeps Sudachi in step on all your devices and with your other apps (My Apps › hub › sudachi), brings your shifts from Mandarin for the picks, and your aims from Citrus Plan.'),
     h('div', { class: 'row wrap', style: { marginTop: '8px' } },
-      signed ? h('button', { class: 'btn', onClick: () => { G.signOut(); saveWatch(null); render(); } }, 'Sign out') : h('button', { class: 'btn primary', onClick: async () => { try { if (cid.value.trim() !== s.settings.clientId) { store.update(x => ({ ...x, settings: { ...x.settings, clientId: cid.value.trim() } }), { remote: false }); } await G.init(cid.value.trim() || s.settings.clientId); await G.signIn({ renew: G.wasSignedIn() }).catch(() => G.signIn()); toast('Signed in', 'ok'); refreshAll(true, { full: true }); } catch (e) { toast(e.message, 'err'); } } }, G.wasSignedIn() ? 'Reconnect Google' : 'Sign in with Google'),
+      signed ? h('button', { class: 'btn', onClick: () => { G.signOut(); saveWatch(null); render(); } }, 'Sign out') : h('button', { class: 'btn primary', onClick: async () => { try { if (cid.value.trim() !== s.settings.clientId) { store.update(x => ({ ...x, settings: { ...x.settings, clientId: cid.value.trim() } }), { remote: false }); } if (!G.ready() || cid.value.trim() !== s.settings.clientId) await G.init(cid.value.trim() || s.settings.clientId); await G.signIn({ renew: G.wasSignedIn() }); toast('Signed in', 'ok'); refreshAll(true, { full: true }); } catch (e) { toast(e.message, 'err'); } } }, G.wasSignedIn() ? 'Reconnect Google' : 'Sign in with Google'),
       signed ? h('button', { class: 'btn', onClick: () => refreshAll(true) }, '↻ Sync now') : null,
       signed ? h('button', { class: 'btn', onClick: backupsSheet }, '⟲ Daily backups') : null, signed ? h('button', { class: 'btn', onClick: repairSheet }, '🩺 Check Drive') : null),
     signed ? h('div', { class: 'small muted', style: { marginTop: '8px' } }, `${s.google.email || 'signed in'}${s.google.lastSync ? ` · last sync ${new Date(s.google.lastSync).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : ''}`) : null,

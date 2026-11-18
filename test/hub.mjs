@@ -93,6 +93,20 @@ const sc = await state(C.p);
 check(sc.media.afterMove && sc.media.cb1, 'a fresh device finds the moved folder by tag and has everything');
 check(await until(C.p, () => window.__sudachi.R.has()), 'and still reads Mandarin’s shifts from their new place');
 check(!g.path(['My Apps', 'hub', 'sudachi'], false), 'no My Apps/hub/sudachi is created again');
+console.log('sign-in when Google reports its window closed before answering');
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block', timezoneId: 'Asia/Riyadh' });
+  await g.attach(ctx); const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, body: '' }));
+  await p.addInitScript(() => { window.__gisClosedFirst = true; });
+  await p.goto(url + '#more'); await sleep(800);
+  await p.click('#view-more button:has-text("Sign in with Google")');
+  check(await until(p, () => window.__sudachi.G.isSignedIn(), 6000), 'the late answer is kept: signed in');
+  check(await p.evaluate(() => window.__gisRequests) === 1, 'Google’s window opened once, not twice');
+  check(/token/.test(await p.evaluate(() => window.__sudachi.G.auth.lastEvent)), 'Diagnostics shows the last sign-in event');
+  check(!errs.length, 'no page errors');
+  await ctx.close();
+}
 const twins = g.tree().filter(l => /(status|state)\.json/.test(l) && !/backups|citrus|mandarin/.test(l));
 check(twins.length === new Set(twins).size, `no duplicate files (${twins.length})`);
 check(!A.p.errors.length && !B.p.errors.length && !C.p.errors.length, `no page errors${[...A.p.errors, ...B.p.errors, ...C.p.errors].slice(0, 2).join(' | ')}`);

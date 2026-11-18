@@ -139,8 +139,9 @@ export function createFakeGoogle({ email = 'tester@example.com' } = {}) {
 
   function gisStub(fail) {
     return `window.google = { accounts: { oauth2: {
-      initTokenClient(cfg) { return { callback: cfg.callback, error_callback: null, requestAccessToken(o) {
-        const self = this; setTimeout(() => ${fail ? "self.error_callback ? self.error_callback({ type: 'popup_failed_to_open' }) : self.callback({ error: 'interaction_required' })" : "self.callback({ access_token: 'tok-' + Math.random().toString(36).slice(2), expires_in: 3600 })"}, 20); } }; },
+      initTokenClient(cfg) { return { callback: cfg.callback, error_callback: cfg.error_callback, requestAccessToken(o) {
+        const self = this; window.__gisRequests = (window.__gisRequests || 0) + 1; if (window.__gisClosedFirst) { setTimeout(() => self.error_callback && self.error_callback({ type: 'popup_closed' }), 10); setTimeout(() => self.callback({ access_token: 'tok-late', expires_in: 3600 }), 300); return; }
+        setTimeout(() => ${fail ? "self.error_callback ? self.error_callback({ type: 'popup_failed_to_open' }) : self.callback({ error: 'interaction_required' })" : "self.callback({ access_token: 'tok-' + Math.random().toString(36).slice(2), expires_in: 3600 })"}, 20); } }; },
       revoke(t, cb) { cb && cb(); } } } };`;
   }
 
