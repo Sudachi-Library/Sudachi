@@ -109,6 +109,46 @@ console.log('sign-in when Google reports its window closed before answering');
   check(!errs.length, 'no page errors');
   await ctx.close();
 }
+console.log('installed app: the popup loses its answer, so sign-in goes to Google and back in the same window');
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block', timezoneId: 'Asia/Riyadh' });
+  await g.attach(ctx); const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, body: '' }));
+  let asked = null, answer = 'token';
+  await p.route(/accounts\.google\.com\/o\/oauth2\/v2\/auth/, r => {
+    const q = new URL(r.request().url()).searchParams; asked = Object.fromEntries(q);
+    const back = answer === 'token' ? `access_token=tok-redirect&token_type=Bearer&expires_in=3599&scope=${encodeURIComponent(q.get('scope'))}&state=${q.get('state')}`
+      : answer === 'nodrive' ? `access_token=tok-x&expires_in=3599&scope=${encodeURIComponent('https://www.googleapis.com/auth/userinfo.email')}&state=${q.get('state')}` : `error=access_denied&state=${q.get('state')}`;
+    return r.fulfill({ status: 302, headers: { location: `${q.get('redirect_uri')}#${back}` } });
+  });
+  await p.addInitScript(() => { window.__gisLost = true; });
+  await p.goto(url + '#more'); await sleep(800);
+  await p.click('#view-more button:has-text("Sign in with Google")');
+  check(await until(p, () => localStorage.getItem('sudachi.google.mode') === 'redirect', 12000), 'a popup that never answers switches this device to same-window sign-in');
+  check(/same window/.test(await p.textContent('body')), 'and says so in plain words');
+  check(!(await p.evaluate(() => window.__sudachi.G.isSignedIn())), 'not signed in yet');
+  answer = 'denied';
+  const popups = await p.evaluate(() => window.__gisRequests);
+  const leaving = p.waitForEvent('framenavigated');
+  await p.click('#view-more button:has-text("Sign in with Google")');
+  await leaving; await p.waitForLoadState('load'); await sleep(900);
+  check(popups === 1 && asked, 'the next tap goes to Google in the same window, no second popup');
+  check(!(await p.evaluate(() => window.__sudachi.G.isSignedIn())) && /cancelled/.test(await p.textContent('body')), 'cancelled at Google: not signed in, says it was cancelled');
+  answer = 'nodrive';
+  await p.click('#view-more button:has-text("Sign in with Google")');
+  await p.waitForLoadState('load'); await sleep(900);
+  check(!(await p.evaluate(() => window.__sudachi.G.isSignedIn())) && /did not allow Drive/.test(await p.textContent('body')), 'Drive box unticked: not signed in, says to tick Drive');
+  answer = 'token';
+  await p.click('#view-more button:has-text("Sign in with Google")');
+  check(await until(p, () => window.__sudachi.G.isSignedIn(), 8000), 'back from Google: signed in');
+  check(asked && asked.response_type === 'token' && asked.redirect_uri === new URL(url).origin + '/' && /auth\/drive/.test(asked.scope) && asked.state?.length >= 16, `Google was asked properly (return ${asked?.redirect_uri})`);
+  check(await p.evaluate(() => JSON.parse(localStorage.getItem('sudachi.google')).access_token) === 'tok-redirect', 'the token from the address is kept');
+  check(await p.evaluate(() => !/access_token/.test(location.href) && location.hash === '#more'), 'the token is wiped from the address; back on Settings');
+  await p.goto(url + '#access_token=forged&expires_in=3599&state=nope&scope=' + encodeURIComponent('https://www.googleapis.com/auth/drive')); await sleep(900);
+  check(await p.evaluate(() => JSON.parse(localStorage.getItem('sudachi.google')).access_token) === 'tok-redirect', 'an answer that was not asked for is ignored');
+  check(!errs.length, `no page errors ${errs.slice(0, 2).join(' | ')}`);
+  await ctx.close();
+}
 const twins = g.tree().filter(l => /(status|state)\.json/.test(l) && !/backups|citrus|mandarin/.test(l));
 check(twins.length === new Set(twins).size, `no duplicate files (${twins.length})`);
 check(!A.p.errors.length && !B.p.errors.length && !C.p.errors.length, `no page errors${[...A.p.errors, ...B.p.errors, ...C.p.errors].slice(0, 2).join(' | ')}`);

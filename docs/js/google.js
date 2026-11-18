@@ -75,7 +75,12 @@ function loadGis() {
 /** Prepare sign-in: load Google's script and the token client now, so a later tap can open the window at once. */
 export async function init(id) {
   clientId = id; if (!clientId) return false;
+  if (redirectMode()) { loadGis().then(() => setupClient()).catch(() => {}); return true; }   // the popup isn't used here
   await loadGis();
+  setupClient();
+  return true;
+}
+function setupClient() {
   tokenClient = window.google.accounts.oauth2.initTokenClient({
     client_id: clientId, scope: SCOPES, include_granted_scopes: true,
     callback: async (r) => {
@@ -98,7 +103,7 @@ export async function init(id) {
       auth.lastEvent = `window: ${e?.type || 'error'}`;
       if (!pending) return;
       // "closed" can come before the answer: wait a little for the token before giving up (no second window is opened)
-      if (e?.type === 'popup_closed') { const p = pending; clearTimeout(closeGrace); closeGrace = setTimeout(() => { if (pending === p) { pending = null; p.reject(new GoogleError('Sign-in window closed before Google answered. Tap Sign in once more.', { auth: true })); } }, 8000); return; }
+      if (e?.type === 'popup_closed') { const p = pending; clearTimeout(closeGrace); closeGrace = setTimeout(() => { if (pending === p) { pending = null; preferRedirect(); p.reject(new GoogleError('Google\'s window lost its answer. Tap Sign in once more: this time Google opens in the same window and comes back here.', { auth: true })); } }, 8000); return; }
       const p = pending; pending = null;
       p.reject(new GoogleError(e?.type === 'popup_closed' ? 'Sign-in window closed.' : e?.type === 'popup_failed_to_open' ? 'The browser blocked Google\'s window — tap again.' : `Google sign-in: ${e?.message || e?.type || 'failed'}`, { auth: true }));
     },
@@ -106,10 +111,53 @@ export async function init(id) {
   return true;
 }
 
+// ──────────── sign-in by going to Google and back (no popup)
+// An app installed on the home screen (Android especially) often never receives the popup's answer: the window closes,
+// the token is lost, and the owner signs in again and again (18/11/2026, twice). So installed apps — and any device
+// where the popup failed once — send the whole page to Google and read the token from the address Google sends back to.
+// The return address (this page, e.g. https://sudachi-library.github.io/Sudachi/) must be listed under "Authorized
+// redirect URIs" of the shared OAuth client.
+const MODE_KEY = 'sudachi.google.mode';      // 'redirect' after a popup failed on this device
+const BACK_KEY = 'sudachi.google.back';      // {state, hash, at} while away at Google
+export const returnAddress = () => location.origin + location.pathname.replace(/index\.html$/, '');
+const installed = () => { try { return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches || navigator.standalone === true; } catch { return false; } };
+export function redirectMode() { try { if (localStorage.getItem(MODE_KEY) === 'redirect') return true; } catch {} return installed(); }
+function preferRedirect() { try { localStorage.setItem(MODE_KEY, 'redirect'); } catch {} }
+
+/** Leave for Google's sign-in page; the app opens again with the token in the address. */
+export function signInRedirect({ renew = false } = {}) {
+  if (!clientId) throw new GoogleError('Add the Google client ID in Settings first.', { auth: true });
+  const state = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('');
+  try { localStorage.setItem(BACK_KEY, JSON.stringify({ state, hash: location.hash, at: Date.now() })); } catch {}
+  const q = new URLSearchParams({ client_id: clientId, redirect_uri: returnAddress(), response_type: 'token', scope: SCOPES, include_granted_scopes: 'true', state });
+  if (!renew) q.set('prompt', 'consent');
+  if (token?.email) q.set('login_hint', token.email);
+  auth.lastEvent = 'redirect: away';
+  location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + q);
+  return new Promise(() => {});   // the page is leaving
+}
+
+/** On start-up: if Google just sent us back, keep the token and tidy the address. → null | {ok:true} | {ok:false, message} */
+export async function takeRedirect() {
+  const h = location.hash || '';
+  if (!/[#&](access_token|error)=/.test(h)) return null;
+  const r = Object.fromEntries(new URLSearchParams(h.slice(1)));
+  let back = null; try { back = JSON.parse(localStorage.getItem(BACK_KEY) || 'null'); localStorage.removeItem(BACK_KEY); } catch {}
+  history.replaceState(null, '', location.pathname + location.search + (back?.hash && !/access_token|error=/.test(back.hash) ? back.hash : '#more'));
+  if (!back || back.state !== r.state) { auth.lastEvent = 'redirect: state mismatch'; return { ok: false, message: 'That Google answer was not for this sign-in. Tap Sign in again.' }; }
+  if (r.error) { auth.lastEvent = `redirect: ${r.error}`; auth.lastError = r.error; return { ok: false, message: r.error === 'access_denied' ? 'Google sign-in was cancelled.' : `Google sign-in: ${r.error}` }; }
+  if (!String(r.scope || '').split(/\s+/).includes('https://www.googleapis.com/auth/drive')) { auth.lastEvent = 'redirect: no drive'; auth.lastError = 'Drive was not allowed'; return { ok: false, message: 'Google signed you in but did not allow Drive. Sign in again and tick the box for Google Drive.' }; }
+  saveToken({ access_token: r.access_token, exp: Date.now() + (Number(r.expires_in) || 3600) * 1000 });
+  auth.needsSignIn = false; auth.lastError = ''; auth.lastEvent = 'redirect: token';
+  if (!token.email) { try { const u = await userInfo(); saveToken({ email: u.email || '' }); } catch {} }
+  return { ok: true };
+}
+
 /** The token client is ready (Google's script loaded at start-up): a tap can open the window at once, inside the tap. */
-export const ready = () => !!tokenClient;
+export const ready = () => !!tokenClient || (redirectMode() && !!clientId);
 /** Get a token. Must run inside a tap on phones. `renew`: the account already agreed, so no consent screen. */
 export function signIn({ renew = false } = {}) {
+  if (redirectMode() && clientId) return signInRedirect({ renew });
   if (pending) return pending.promise;
   if (!tokenClient) return Promise.reject(new GoogleError(clientId ? 'Google sign-in is still loading — tap again.' : 'Add the Google client ID in Settings first.', { auth: true }));
   let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; });
@@ -126,6 +174,7 @@ export function renewOnTap(onRenewed) {
   if (tapHooked) return; tapHooked = true;
   document.addEventListener('pointerdown', () => {
     if (isSignedIn() || !wasSignedIn() || !tokenClient || pending || navigator.onLine === false) return;
+    if (redirectMode()) { auth.needsSignIn = true; for (const fn of authListeners) fn(false); return; }   // leaving the page needs a deliberate tap on Reconnect
     signIn({ renew: true }).then(() => onRenewed?.()).catch(() => { auth.needsSignIn = true; for (const fn of authListeners) fn(false); });
   }, { capture: true });
 }

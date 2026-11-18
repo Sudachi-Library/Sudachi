@@ -27,7 +27,7 @@ import * as CV from './covers.js';
 import { checkBackup, describeCounts } from './backup-check.js';
 import { h, toast, keyOf, fmtDate, pad2, DAY_NAMES, MONTHS, uid } from './util.js';
 
-export const VERSION = '1.4.0';
+export const VERSION = '1.4.1';
 const CITRUS_URL = 'https://amaerys.github.io/citrus-maxima/';
 const MANDARIN_URL = 'https://mandarin-work.github.io/Mandarin/';
 
@@ -77,6 +77,7 @@ async function boot() {
   store.subscribe(() => { applyLook(); render(); publishSoon(); coversSoon(); });
   store.onRemoteSync(scheduleRemoteSave);
   R.load(); loadHubCache(); G.loadSeen(Object.keys(S().media || {}).length > 0 && !store.recovery);
+  const back = await G.takeRedirect();   // back from Google's sign-in page (installed app): keep the token, tidy the address
   handleIncoming();
   if (!rt.handled) show(location.hash.replace('#', '') || CZ.custom(S()).start);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -86,9 +87,10 @@ async function boot() {
   G.renewOnTap(() => { render(); refreshAll(false); });   // the hourly token renews on your next tap (phones only allow Google's window inside a tap)
   if (cid && rt.online) {
     try { await G.init(cid); } catch (e) { console.warn(e); }
-    if (G.isSignedIn()) refreshAll(false);
-    else if (G.wasSignedIn()) { G.auth.needsSignIn = true; render(); }
+    if (G.isSignedIn() && !back?.ok) refreshAll(false);
+    else if (!G.isSignedIn() && G.wasSignedIn()) { G.auth.needsSignIn = true; render(); }
   }
+  if (back) { toast(back.ok ? 'Signed in' : back.message, back.ok ? 'ok' : 'err'); if (back.ok) refreshAll(true, { full: true }); }
   navigator.storage?.persist?.().then(ok => { rt.storagePersisted = ok; }).catch(() => {});
   setInterval(() => {
     const busy = document.querySelector('.sheet-bg, .search, .story') || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
@@ -672,7 +674,7 @@ function diagnosticsCard() {
     ['Tiers', `${n(m => m.score > 0 && !m.auto)} yours · ${n(m => m.auto)} converted (${Object.entries(conv).map(([k, v]) => `${M.SRC_NAME[k] || k} ${v.n}`).join(', ') || 'none'})`],
     ['Relay', s.meta?.relay ? `set · Steam ${s.meta?.steam?.id ? 'yes' : 'no'} · MAL ${s.meta?.mal?.user ? 'yes' : 'no'}` : 'not set up'],
     ['Taken over from Citrus', s.migrated ? (s.migrated.from === 'skipped' ? 'skipped' : `${new Date(s.migrated.at).toLocaleDateString('en-GB')} · ${MIG.describe(s.migrated.counts || {})}`) : 'not yet'],
-    ['Version', VERSION], ['Online', rt.online ? 'yes' : 'no'], ['Installed', window.matchMedia('(display-mode: standalone)').matches ? 'yes (home screen)' : 'browser tab'],
+    ['Version', VERSION], ['Online', rt.online ? 'yes' : 'no'], ['Installed', window.matchMedia('(display-mode: standalone)').matches ? 'yes (home screen)' : 'browser tab'], ['Sign-in', G.redirectMode() ? 'same window (goes to Google and back)' : 'Google window (popup)'],
   ];
   return h('details', { class: 'card' }, h('summary', {}, h('b', {}, 'Diagnostics')), h('div', { class: 'kv' }, ...rows.flatMap(([a, b]) => [h('b', {}, a), h('span', {}, b)])),
     h('div', { class: 'row', style: { marginTop: '10px' } }, h('button', { class: 'btn sm', onClick: () => refreshAll(true) }, 'Sync now'), h('button', { class: 'btn sm', onClick: async () => { const regs = await navigator.serviceWorker?.getRegistrations?.() || []; for (const r of regs) await r.unregister(); const ks = await caches.keys(); for (const k of ks) await caches.delete(k); location.reload(); } }, 'Reinstall app files')));

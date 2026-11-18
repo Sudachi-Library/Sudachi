@@ -1,5 +1,5 @@
 // Sudachi service worker: precached app shell, network-first with a short timeout, Google Fonts cached for offline.
-const CACHE = 'sudachi-648a76c6f1';
+const CACHE = 'sudachi-141216951b';
 const FONTS = 'sudachi-fonts-v1';   // kept across releases: font files are immutable, no need to fetch them again
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Permanent+Marker&family=Pixelify+Sans:wght@500;700&family=JetBrains+Mono:wght@500;700&display=swap';
 // Without these the app cannot start offline: install fails (and the old worker stays) if one is missing.
