@@ -1171,3 +1171,11 @@ details.card > summary b::after { content: " ▾"; color: var(--dim); }
 .cv-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; margin: 10px 0; }
 .cv-opt { display: flex; flex-direction: column; gap: 4px; align-items: center; padding: 4px; border-radius: 10px; border: 2px solid transparent; }
 .cv-opt img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 6px; background: var(--card2); } .cv-opt small { font-size: 10.5px; color: var(--muted); } .cv-opt.on { border-color: var(--acc); }
+/* the cloud card: one plain sentence, then where your data is */
+.cloud .cl-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; } .cl-h { font-weight: 800; font-size: 17px; }
+.cl-dot { width: 14px; height: 14px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; background: var(--dim); }
+.cloud.t-ok .cl-dot { background: var(--green); box-shadow: 0 0 10px var(--green); } .cloud.t-busy .cl-dot { background: var(--orange); animation: pulse 1s infinite; } .cloud.t-warn .cl-dot { background: var(--day); } .cloud.t-bad .cl-dot { background: var(--red); }
+.cl-rows { display: flex; flex-direction: column; gap: 6px; } .cl-row { display: grid; grid-template-columns: 20px auto 1fr; gap: 8px; align-items: baseline; } .cl-row b { font-size: 13.5px; white-space: nowrap; }
+.cl-i { font-weight: 800; text-align: center; } .cl-row.ok .cl-i { color: var(--green); } .cl-row.bad .cl-i { color: var(--red); }
+@media (max-width: 420px) { .cl-row { grid-template-columns: 20px 1fr; } .cl-row .small { grid-column: 2; } }
+.topbar .sync.bad { background: var(--red); box-shadow: 0 0 8px var(--red); }

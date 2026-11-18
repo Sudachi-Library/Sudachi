@@ -33,6 +33,8 @@ async function device(label, { width = 390 } = {}) {
   await p.goto(url); await p.waitForSelector('#view-today.active'); p.label = label;
   return { ctx, p };
 }
+// Sudachi's Drive copy: state.json (core) + media-NN.json parts, joined like the app does
+const driveState = (path) => { const core = g.readJsonAt(path, 'state.json'); if (!core) return null; const media = { ...(core.media || {}) }; for (let i = 0; i < 16; i++) Object.assign(media, g.readJsonAt(path, `media-${String(i).padStart(2, '0')}.json`)?.media || {}); return { ...core, media }; };
 const state = (p) => p.evaluate(() => JSON.parse(localStorage.getItem('sudachi.state.v1') || 'null'));
 const until = async (p, fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await p.evaluate(fn).catch(() => false)) return true; await sleep(150); } return false; };
 const sync = async (p) => { await until(p, () => !window.__sudachi.rt.syncing); await p.evaluate(() => window.__sudachi.refreshAll(true)); await until(p, () => !window.__sudachi.rt.syncing); await sleep(300); };
@@ -87,7 +89,7 @@ tagAndMove(['My Apps', 'hub', 'mandarin'], 'mandarin', ['Citrus', 'Work', 'Manda
 tagAndMove(['My Apps', 'hub', 'citrus'], 'citrus', ['Citrus', '00 Hub', 'Citrus']);
 await A.p.evaluate(() => { const w = window.__sudachi; w.store.update(s => w.M.addMedia(s, { id: 'afterMove', kind: 'book', title: 'Written after the move', status: 'planned' })); });
 await sync(A.p); await A.p.evaluate(() => window.__sudachi.publish()); await sleep(300);
-check(g.readJsonAt(['Citrus', 'Life', 'Media - Sudachi'], 'state.json')?.media?.afterMove, 'after the move the phone writes into the moved folder');
+check(driveState(['Citrus', 'Life', 'Media - Sudachi'])?.media?.afterMove, 'after the move the phone writes into the moved folder');
 const C = await device('fresh tablet', { width: 800 }); await sleep(400); await sync(C.p);
 const sc = await state(C.p);
 check(sc.media.afterMove && sc.media.cb1, 'a fresh device finds the moved folder by tag and has everything');

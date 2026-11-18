@@ -5,6 +5,7 @@
 // modules, no build step.
 import * as store from './store.js';
 import { mergeStates } from './store.js';
+import { join as joinParts } from './cloudparts.js';
 import * as G from './google.js';
 import * as R from './roster.js';
 import * as D from './day.js';
@@ -26,7 +27,7 @@ import * as CV from './covers.js';
 import { checkBackup, describeCounts } from './backup-check.js';
 import { h, toast, keyOf, fmtDate, pad2, DAY_NAMES, MONTHS, uid } from './util.js';
 
-export const VERSION = '1.3.1';
+export const VERSION = '1.4.0';
 const CITRUS_URL = 'https://amaerys.github.io/citrus-maxima/';
 const MANDARIN_URL = 'https://mandarin-work.github.io/Mandarin/';
 
@@ -43,7 +44,9 @@ const S = () => store.get();
 
 // ---------------- boot ----------------
 async function boot() {
-  applyTheme(); watchSheets(); applyLook();
+  applyTheme(); watchSheets();
+  await store.init().catch(e => console.warn('device store', e));   // IndexedDB's copy (bigger libraries, other tabs) before the first screen
+  applyLook();
   for (const b of document.querySelectorAll('nav.tabs button')) b.addEventListener('click', () => go(b.dataset.view));
   $('#btnRefresh').addEventListener('click', () => refreshAll(true));
   $('#btnMore').addEventListener('click', () => show('more'));
@@ -66,14 +69,14 @@ async function boot() {
     else if (e.key === 'i') { IU.importSheet(); e.preventDefault(); }
     else if (e.key === '?') { shortcutsSheet(); e.preventDefault(); }
   });
-  window.addEventListener('online', () => { rt.online = true; renderSync(); });
+  window.addEventListener('online', () => { rt.online = true; renderSync(); setTimeout(() => { if (G.isSignedIn()) refreshAll(false); }, 1500); });   // back online: save what waited
   window.addEventListener('offline', () => { rt.online = false; renderSync(); });
   Object.assign(ctx, { S, update: (fn) => store.update(fn), sheet: (c) => sheet(c), render: () => render(), go: (v, p) => go(v, p), undoTo, cheer,
     goals: () => rt.hub.goals || { aims: [] }, kinds: kindsOf, hasShifts: () => R.has(), signedIn: () => G.isSignedIn(), migrateNow, importSheet: (w) => IU.importSheet(w),
     openItem: (id) => IT.openItem(id), finish: (id) => IT.finishSheet(id), sync: () => refreshAll(true) });
   store.subscribe(() => { applyLook(); render(); publishSoon(); coversSoon(); });
   store.onRemoteSync(scheduleRemoteSave);
-  R.load(); loadHubCache();
+  R.load(); loadHubCache(); G.loadSeen(Object.keys(S().media || {}).length > 0 && !store.recovery);
   handleIncoming();
   if (!rt.handled) show(location.hash.replace('#', '') || CZ.custom(S()).start);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -92,11 +95,11 @@ async function boot() {
     if (rt.view === 'today' && document.visibilityState === 'visible' && !busy) render();
   }, 5 * 60000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { flushRemoteSave(); return; }
+    if (document.visibilityState === 'hidden') { store.flushDevice(); flushRemoteSave(); return; }
     if (G.isSignedIn() && Date.now() - (S().google.lastSync || 0) > 2 * 60000) refreshAll(false);
     if (!document.querySelector('.sheet-bg, .story')) render();
   });
-  window.addEventListener('pagehide', flushRemoteSave);
+  window.addEventListener('pagehide', () => { store.flushDevice(); flushRemoteSave(); });
   setInterval(() => { if (document.visibilityState === 'visible' && G.isSignedIn() && rt.online && Date.now() - (S().google.lastSync || 0) > 5 * 60000) refreshAll(false); }, 60000);
   renderSync();
   coversSoon(3000);
@@ -218,7 +221,8 @@ function applyTheme() { const u = getUi(), r = document.documentElement; r.datas
 // ---------------- sync ----------------
 function renderSync() {
   const dot = $('#syncDot'), txt = $('#syncText'), signed = G.isSignedIn();
-  dot.className = 'sync ' + (rt.syncing ? 'busy' : signed && rt.online ? 'on' : '');
+  dot.className = 'sync ' + (rt.syncing ? 'busy' : signed && rt.online ? ((rt.lastProblems || []).length ? 'bad' : rt.saveDirty ? 'busy' : 'on') : '');
+  dot.title = cloudState().head;
   txt.textContent = !rt.online ? 'offline' : rt.syncing ? 'syncing…' : signed ? (S().google.email || 'Google') : '';
 }
 // state.json is written at most every 2.5 s, only when its content changed, and only if no other device wrote it since we
@@ -230,7 +234,7 @@ function scheduleRemoteSave() {
   rt.saveDirty = true;
   clearTimeout(saveTimer);
   if (!G.isSignedIn() || !rt.online) return;   // stays dirty: the next sync saves it
-  saveTimer = setTimeout(() => saveStateNow().catch(e => console.warn('remote save failed', e.message)), 2500);
+  saveTimer = setTimeout(() => withDriveLock(() => saveStateNow()).catch(e => { console.warn('remote save failed', e.message); retryLater([e.message]); }), 2500);
 }
 function flushRemoteSave() { if (rt.saveDirty && G.isSignedIn() && rt.online) { clearTimeout(saveTimer); saveStateNow().catch(() => {}); } }
 async function saveStateNow() {
@@ -253,24 +257,57 @@ async function saveStateNow() {
 function stripForRemote(s) { const { outbox, google, ...rest } = s; return rest; }
 const comparable = (s) => G.fingerprint(stripForRemote(s || {}), ['updatedAt']);
 /** Read state.json and merge it in. Writes back only if the merged copy holds something Drive doesn't. */
+/** Read what another device changed on Drive (only the files that moved) and merge it in, record by record. If that merge would
+ *  remove a lot of titles at once (another device deleted them), a copy is kept on Drive first and you are asked. */
 async function pullState(fromConflict = false) {
-  const remote = await G.loadRemoteState(S().settings.driveFolder);
-  if (!remote) { store.merged(); scheduleRemoteSave(); return false; }
-  if (typeof remote !== 'object' || (remote.app && remote.app !== 'sudachi')) throw new Error('state.json on Drive is not Sudachi’s — kept your copy (backups are in hub/sudachi/backups)');
-  const force = fromConflict || store.needsMerge(); store.merged();
-  if ((!force && (remote.updatedAt || 0) === (S().updatedAt || 0)) || comparable(remote) === comparable(S())) return false;
-  const merged = mergeStates(S(), remote);
-  merged.updatedAt = Math.max(S().updatedAt || 0, remote.updatedAt || 0) + (comparable({ ...merged, updatedAt: 0 }) !== comparable({ ...remote, updatedAt: 0 }) ? 1 : 0);
+  const all = store.needsMerge();
+  const got = await G.loadRemoteState(S().settings.driveFolder, { all });
+  store.merged();
+  if (!got) { scheduleRemoteSave(); return false; }
+  if (got.core && got.core.app && got.core.app !== 'sudachi') throw new Error('state.json on Drive is not Sudachi’s — kept your copy (backups are in its backups folder)');
+  if (!got.changed.length) return false;
+  const before = S(), remote = joinParts(got.core || {}, got.parts);
+  const merged = mergeStates(before, remote);
+  merged.updatedAt = Math.max(before.updatedAt || 0, remote.updatedAt || 0) + 1;
+  const had = Object.keys(before.media || {}), lost = had.filter(id => !merged.media?.[id]);
+  const mass = lost.length >= Math.max(25, Math.ceil(had.length * 0.2));
+  if (mass) backupBefore('mass-delete');
   store.replaceState(merged);
-  if (comparable(merged) !== comparable(remote)) { if (fromConflict) rt.saveDirty = true; else scheduleRemoteSave(); }
+  if (mass) massDeleteSheet(before, lost);
+  if (got.salvaged || comparable(merged) !== comparable(remote)) { if (fromConflict) rt.saveDirty = true; else scheduleRemoteSave(); }
   rt.lastPull = Date.now();
   return true;
+}
+/** Another device removed many titles at once: they are gone here too, but one tap brings them back everywhere. */
+function massDeleteSheet(before, lost) {
+  const names = lost.slice(0, 5).map(id => M.shown(before.media[id])).join(', ');
+  const { close } = sheet([h('h2', {}, `${lost.length} titles were removed on another device`),
+    h('p', { class: 'small' }, `For example: ${names}${lost.length > 5 ? '…' : ''}.`),
+    h('p', { class: 'small muted' }, 'If that was you, keep it. If not (a mistake, or a device acting up), bring them back: they return on every device. A copy from just before is also kept on Drive in Sudachi’s backups.'),
+    h('div', { class: 'row wrap sh-foot' }, h('button', { class: 'btn primary grow', onClick: () => { close(); const now = S(), back = { ...now, media: { ...now.media } }; for (const id of lost) back.media[id] = before.media[id]; store.replaceState(back, { bump: true, exact: now }); render(); toast(`${lost.length} titles brought back`, 'ok'); } }, 'Bring them back'), h('button', { class: 'btn ghost', onClick: () => close() }, 'Keep them removed'))]);
 }
 const WATCH_KEY = 'sudachi.drive.watch';
 function loadWatch() { try { const w = JSON.parse(localStorage.getItem(WATCH_KEY) || 'null'); return w && w.root === S().settings.driveFolder ? w : null; } catch { return null; } }
 function saveWatch(w) { rt.watch = w; try { w ? localStorage.setItem(WATCH_KEY, JSON.stringify(w)) : localStorage.removeItem(WATCH_KEY); } catch {} }
 
-async function refreshAll(manual, { full = false } = {}) {
+// One Sudachi window talks to Drive at a time (a Web Lock shared by every tab); the others get its changes through the device store.
+function withDriveLock(fn, { wait = true } = {}) {
+  if (!navigator.locks?.request) return fn(true);
+  return navigator.locks.request('sudachi-drive', wait ? {} : { ifAvailable: true }, (lock) => fn(!!lock));
+}
+async function refreshAll(manual, opts = {}) {
+  return withDriveLock((got) => { if (!got) { if (manual) toast('Another Sudachi window is syncing; this one shows its changes'); return; } return refreshAllInner(manual, opts); }, { wait: false });
+}
+// After a failed sync, try again soon and then less often (30 s, 2 min, 5 min, 15 min) instead of waiting for the next 5-minute tick.
+const RETRY = [30, 120, 300, 900];
+function retryLater(problems) {
+  clearTimeout(rt.retryTimer);
+  if (!problems.length) { rt.fails = 0; rt.nextRetry = 0; return; }
+  if (problems.every(p => /reconnect|sign in/i.test(p))) return;   // needs a tap, not a retry
+  const s = RETRY[Math.min(rt.fails || 0, RETRY.length - 1)]; rt.fails = (rt.fails || 0) + 1; rt.nextRetry = Date.now() + s * 1000;
+  rt.retryTimer = setTimeout(() => { if (rt.online && G.isSignedIn()) refreshAll(false); }, s * 1000);
+}
+async function refreshAllInner(manual, { full = false } = {}) {
   if (!rt.online && manual) { toast('Offline — Sudachi syncs when you are back online'); return; }
   if (!G.isSignedIn()) { if (manual) toast(G.wasSignedIn() ? 'Google needs a tap to reconnect' : S().settings.clientId ? 'Sign in to Google in Settings' : 'Add your Google client ID in Settings'); render(); return; }
   if (!rt.online) { if (manual) toast('You are offline'); return; }
@@ -309,11 +346,11 @@ async function refreshAll(manual, { full = false } = {}) {
     if (!problems.length) G.backupDaily(root, stripForRemote(S()), keyOf(new Date())).catch(e => console.warn('backup', e.message));
     await step('publish', publish);
     store.update(s => ({ ...s, google: { ...s.google, lastSync: Date.now() } }), { remote: false, silent: true });
-    rt.lastProblems = problems; rt.lastSyncMs = Math.round(performance.now() - t0);
+    rt.lastProblems = problems; rt.lastSyncMs = Math.round(performance.now() - t0); retryLater(problems); if (!problems.length) rt.lastGood = Date.now();
     if (manual) toast(problems.length ? 'Synced with issues — see Settings › Diagnostics' : 'Synced', problems.length ? 'err' : 'ok');
     else if (problems.length) console.warn(problems);
   } catch (e) {
-    rt.lastProblems = [e.message];
+    rt.lastProblems = [e.message]; retryLater([e.message]);
     if (manual) toast(e.message, 'err');
   } finally { rt.syncing = false; renderSync(); render(); }
 }
@@ -324,7 +361,7 @@ function classifyChanges(changes, w) {
   for (const c of changes) {
     if (roots.has(c.id) && (c.removed || c.trashed || !(c.parents || []).length)) { G.forgetFolders(); return null; }   // one of our folders vanished: rebuild
     const par = c.parents || [];
-    if (par.includes(w.me) && c.name === 'state.json' && (c.props?.rev || '') !== G.seenStateRev()) plan.state = true;
+    if (par.includes(w.me) && (c.name === 'state.json' || /^media-\d\d\.json$/.test(c.name || '')) && (c.props?.rev || '') !== G.seenRev(c.name)) plan.state = true;
     if (w.mandarin && par.includes(w.mandarin) && c.name === 'shifts.json') plan.hub = true;
     if (w.citrus && par.includes(w.citrus) && c.name === 'plan.json') plan.hub = true;
     const tag = c.props?.citrusApp;   // folders are found by tag: a tagged folder Sudachi uses that is new to it (or was re-tagged) means look again
@@ -590,6 +627,30 @@ function goalsCard() {
   return h('div', { class: 'card' }, h('div', { class: 'title' }, `Goals for ${y}`), h('div', { class: 'tiny dim' }, 'How many to finish this year. A goal can link to an aim in Citrus Plan (Citrus shows the progress there).'),
     row('all', '✦ Anything'), ...M.KINDS.map(k => row(k.id, `${k.emoji} ${k.name}`)));
 }
+/** The cloud in plain words: is everything safe, where, and what happens next. */
+const ago = (t) => { if (!t) return 'never'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(t).toLocaleDateString('en-GB'); };
+function cloudState() {
+  const s = S(), signed = G.isSignedIn(), waiting = rt.saveDirty, probs = rt.lastProblems || [];
+  if (!s.settings.clientId || (!signed && !G.wasSignedIn())) return { tone: 'off', head: 'Only on this device', sub: 'Sign in with Google to keep a copy on your Drive and use Sudachi on other devices.' };
+  if (!signed) return { tone: 'warn', head: 'Google needs a tap', sub: 'Everything is safe on this device. Tap Reconnect and Sudachi saves to Drive again.' };
+  if (!rt.online) return { tone: 'warn', head: waiting ? 'Saved on this device, waiting for a connection' : 'Offline', sub: 'Sudachi saves to Drive by itself when you are back online.' };
+  if (rt.syncing) return { tone: 'busy', head: 'Saving to Drive…', sub: '' };
+  if (probs.length) return { tone: 'bad', head: 'Not saved to Drive yet', sub: `${probs[0].replace(/^\w+: /, '')}${rt.nextRetry ? ` Trying again ${Math.max(1, Math.round((rt.nextRetry - Date.now()) / 60000))} min from now.` : ''} Nothing is lost: it is all on this device.` };
+  if (waiting) return { tone: 'busy', head: 'A change is waiting to be saved', sub: 'It goes to Drive within a few seconds.' };
+  return { tone: 'ok', head: 'Everything is saved to Drive', sub: `Last saved ${ago(rt.lastSave || s.google.lastSync)}, checked ${ago(s.google.lastSync)}.` };
+}
+function cloudCard() {
+  const s = S(), c = cloudState(), dv = store.device, n = Object.keys(s.media || {}).length;
+  const row = (ok, label, detail) => h('div', { class: `cl-row ${ok === true ? 'ok' : ok === false ? 'bad' : ''}` }, h('span', { class: 'cl-i', 'aria-hidden': 'true' }, ok === true ? '✓' : ok === false ? '!' : '·'), h('b', {}, label), h('span', { class: 'small muted' }, detail));
+  return h('div', { class: `card cloud t-${c.tone}` }, h('div', { class: 'title' }, 'Your data'),
+    h('div', { class: 'cl-head' }, h('span', { class: 'cl-dot' }), h('div', {}, h('div', { class: 'cl-h' }, c.head), c.sub ? h('div', { class: 'small muted' }, c.sub) : null)),
+    h('div', { class: 'cl-rows' },
+      row(store.persistence.ok, 'On this device', store.persistence.ok ? `${n.toLocaleString('en')} titles · ${dv.idb ? 'safe copy kept twice' : 'browser storage'} · ${Math.max(1, Math.round(store.persistence.bytes / 1024)).toLocaleString('en')} KB` : store.persistence.lastError),
+      row(G.isSignedIn() ? !(rt.lastProblems || []).length : null, 'On your Drive', G.isSignedIn() ? `${G.ownTagged() ? 'Sudachi’s folder found by its tag' : 'Sudachi’s folder'} · 17 small files, only the changed ones are sent` : 'not connected'),
+      row(G.isSignedIn() ? true : null, 'Backups', G.isSignedIn() ? 'one a day on Drive (the last 14), and one before every big change' : 'download one below'),
+      row(true, 'Two devices at once', 'changes merge title by title; nothing is overwritten')),
+    h('div', { class: 'row wrap', style: { marginTop: '10px' } }, G.isSignedIn() ? h('button', { class: 'btn sm primary', onClick: () => refreshAll(true) }, '↻ Save & check now') : null, G.isSignedIn() ? h('button', { class: 'btn sm', onClick: backupsSheet }, '⟲ Backups') : null, h('button', { class: 'btn sm', onClick: downloadBackup }, '⬇ Download a copy')));
+}
 function diagnosticsCard() {
   const s = S(), n = (f) => Object.values(s.media || {}).filter(f).length, conv = T.convertAll(s).sites;
   const rows = [
@@ -597,7 +658,9 @@ function diagnosticsCard() {
     ['Last sign-in event', `${G.auth.lastEvent || 'none'}${G.auth.lastError ? ` · ${G.auth.lastError}` : ''}`],
     ['Session', G.isSignedIn() ? `${G.tokenMinutesLeft()} min left · renews on your next tap` : '—'],
     ['Last sync', s.google.lastSync ? `${new Date(s.google.lastSync).toLocaleString('en-GB')}${rt.syncMode ? ` · ${rt.syncMode}` : ''}${rt.lastSyncMs ? ` · ${(rt.lastSyncMs / 1000).toFixed(1)} s` : ''}` : 'never'],
-    ['Drive requests', `${G.stats.requests} sent · ${G.stats.retries} retried · ${G.stats.errors} failed · ${G.stats.skippedWrites} unchanged writes skipped`],
+    ['Drive requests', `${G.stats.requests} sent · ${G.stats.retries} retried · ${G.stats.timeouts || 0} timed out · ${G.stats.errors} failed · ${G.stats.skippedWrites} unchanged writes skipped · ${Math.round(G.stats.bytesUp / 1024)} KB sent`],
+    ['Device store', `${store.device.idb ? `IndexedDB, slot ${store.device.slot || '–'}, saved ${ago(store.device.lastIdbSave)}` : `localStorage only${store.device.idbError ? ` (${store.device.idbError})` : ''}`}`],
+    ['Retry', rt.nextRetry ? `next try at ${new Date(rt.nextRetry).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} (${rt.fails} in a row)` : 'none waiting'],
     ['Last Google error', G.stats.lastError ? `${G.stats.lastError} (${new Date(G.stats.lastErrorAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })})` : 'none'],
     ['Unsaved to Drive', rt.saveDirty ? 'yes — saves on the next sync' : 'no'],
     ['This device', `${store.persistence.ok ? 'saved' : '⚠ ' + store.persistence.lastError} · ${Math.round(store.persistence.bytes / 1024)} KB${rt.storagePersisted ? ' · protected from clean-up' : ''}`],
@@ -616,7 +679,7 @@ function diagnosticsCard() {
 }
 function renderMore() {
   const s = S(), signed = G.isSignedIn();
-  const out = [h('h1', {}, 'Settings'), h('div', { class: 'card' }, uiPicker()), customiseCard(), relayCard(), goalsCard()];
+  const out = [h('h1', {}, 'Settings'), cloudCard(), h('div', { class: 'card' }, uiPicker()), customiseCard(), relayCard(), goalsCard()];
   const cid = h('input', { type: 'text', value: s.settings.clientId, placeholder: '1234567890-xxxx.apps.googleusercontent.com', spellcheck: false, 'aria-label': 'OAuth client ID' });
   out.push(h('div', { class: 'card' }, h('div', { class: 'title' }, 'Google'),
     h('div', { class: 'small muted' }, 'Drive keeps Sudachi in step on all your devices and with your other apps (My Apps › hub › sudachi), brings your shifts from Mandarin for the picks, and your aims from Citrus Plan.'),

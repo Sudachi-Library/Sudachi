@@ -21,6 +21,7 @@
 //  - retries with jittered backoff for dropped connections (~25 s), rate limits and 5xx; offline fails fast
 
 import { salvageJSON } from './store.js';
+import { split, isPart } from './cloudparts.js';
 
 const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email';
 const TOKEN_KEY = 'sudachi.google';     // {access_token, exp, email}
@@ -32,7 +33,7 @@ const FOLDER = 'application/vnd.google-apps.folder';
 export class GoogleError extends Error {
   constructor(message, { status = 0, auth = false, retryable = false, network = false } = {}) { super(message); this.status = status; this.auth = auth; this.retryable = retryable; this.network = network; }
 }
-export const stats = { requests: 0, retries: 0, errors: 0, lastError: '', lastErrorAt: 0, skippedWrites: 0, bytesUp: 0, bytesDown: 0, healed: 0 };
+export const stats = { requests: 0, retries: 0, errors: 0, timeouts: 0, lastError: '', lastErrorAt: 0, skippedWrites: 0, bytesUp: 0, bytesDown: 0, healed: 0 };
 export const auth = { needsSignIn: false, lastError: '', lastEvent: '' };
 
 // ════════════════════════════════════════ token & sign-in
@@ -147,12 +148,17 @@ async function gfetch(url, opts = {}) {
   let res, msg = '';
   for (let attempt = 0; ; attempt++) {
     stats.requests++;
-    try { res = await fetch(url, { ...opts, cache: 'no-store', headers: { ...(opts.headers || {}), Authorization: `Bearer ${token.access_token}` } }); }
+    // every request has a deadline: a hung connection ("lie-fi") must never freeze syncing until the app is reopened
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, limit = opts.timeout || (opts.body && String(opts.body).length > 200000 ? 120000 : 30000);
+    const timer = ctl ? setTimeout(() => ctl.abort(), limit) : null;
+    try { res = await fetch(url, { ...opts, timeout: undefined, signal: ctl?.signal, cache: 'no-store', headers: { ...(opts.headers || {}), Authorization: `Bearer ${token.access_token}` } }); }
     catch (e) {
+      clearTimeout(timer); if (e?.name === 'AbortError') stats.timeouts = (stats.timeouts || 0) + 1;
       // a dropped connection: repeat requests that are safe to send twice, for ~25 s
       if ((SAFE.test(method) || opts.retrySafe) && attempt < 5) { stats.retries++; await backoff(attempt); continue; }
-      fail('Network error'); throw new GoogleError('Google couldn\'t be reached — the connection dropped.', { network: true, retryable: true });
+      fail(e?.name === 'AbortError' ? 'Timed out' : 'Network error'); throw new GoogleError(e?.name === 'AbortError' ? 'Google took too long to answer — Sudachi tries again shortly.' : 'Google couldn\'t be reached — the connection dropped.', { network: true, retryable: true });
     }
+    clearTimeout(timer);
     msg = '';
     if (res.status === 403 || res.status === 429) { try { const j = await res.clone().json(); msg = `${j?.error?.message || ''} ${(j?.error?.errors || []).map(x => x.reason).join(' ')}`; } catch {} }
     const slowDown = res.status === 429 || (res.status === 403 && /rate ?limit|quota|userRateLimitExceeded|rateLimitExceeded/i.test(msg));
@@ -455,42 +461,88 @@ export async function readOtherFile(root, app, name) {
   return data && typeof data === 'object' ? { data, modifiedTime: file.modifiedTime, id: file.id } : null;
 }
 
-// ── Sudachi's own state: read with its revision, written only if nobody else wrote it since
-let seenState = null;   // {id, rev, modifiedTime} of the state.json we last read or wrote
-export async function loadRemoteState(root) {
+// ── Sudachi's own state on Drive: a small core (state.json) + 16 part files (media-NN.json, cloudparts.js). Each file carries its
+// revision in appProperties.rev; one folder listing tells which files another device wrote since we last read or wrote them.
+// Only those are downloaded, and only the files whose content changed are uploaded (fingerprint in appProperties.h).
+let seenState = null;        // {id, rev, modifiedTime} of state.json as last read or written (kept for the changes feed)
+let seen = {};               // file name → rev we last read or wrote (kept across sessions while this device's copy holds them)
+const SEEN_KEY = 'sudachi.drive.seen';
+/** Remember which revisions this device already holds, so a new session downloads only what changed. `holds`: this device
+ *  still has its library (false after an erase or a recovery: then everything is read again). */
+export function loadSeen(holds) { try { const j = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null'); seen = holds && j && typeof j === 'object' ? j : {}; } catch { seen = {}; } }
+function saveSeen() { try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch {} }
+const fileIds = {};          // file name → Drive id (this session)
+const mine = (f) => f.name === 'state.json' || isPart(f.name);
+/** Our files in our folder, the newest of each name; older twins (an earlier race) go to the trash. */
+async function listMine(dir) {
+  const files = (await list(dir, { all: true })).filter(mine), by = {};
+  for (const f of files.sort((x, y) => (y.modifiedTime || '').localeCompare(x.modifiedTime || ''))) { if (by[f.name]) { trash(f.id).catch(() => {}); stats.healed++; } else by[f.name] = f; }
+  for (const [n, f] of Object.entries(by)) { fileIds[n] = f.id; if (f.appProperties?.h) lastWritten.set(`${dir}/${n}`, f.appProperties.h); }   // what Drive holds: an unchanged part is never uploaded again
+  return by;
+}
+/** A file we could not read: renamed aside (never overwritten), so whatever is in it can still be recovered by hand. */
+async function setAside(dir, f) {
+  await gfetch(`${DRIVE}/files/${encodeURIComponent(f.id)}?fields=id`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: f.name.replace(/\.json$/, `.damaged-${new Date().toISOString().replace(/[:.]/g, '-')}.json`) }) }).catch(() => {});
+  delete fileIds[f.name]; delete seen[f.name]; delete ids[`file:${dir}/${f.name}`]; persistIds(); lastWritten.delete(`${dir}/${f.name}`); stats.healed++;   // the next save creates a fresh file of that name
+}
+/** Read what moved on Drive since we last looked. all: read every file (a fresh device, a full pass, a recovery).
+ *  → null when Sudachi has nothing on Drive yet, else { core (or null), parts {name: data}, changed: [names], salvaged } */
+export async function loadRemoteState(root, { all = false } = {}) {
   const dir = await meDir(root);
-  const { file, twins } = await findFile(dir, 'state.json');
-  if (!file) { seenState = null; return null; }
-  for (const t of twins) trash(t.id).catch(() => {});
-  ids[`file:${dir}/state.json`] = file.id; persistIds();
-  let data = await readJsonFile(file);
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    // unreadable (cut off, garbage): merge in whatever can still be read, and move the damaged file aside instead of overwriting it
-    let text = ''; try { text = decode(await downloadFile(file.id)); } catch {}
-    data = salvageJSON(text);
-    await gfetch(`${DRIVE}/files/${encodeURIComponent(file.id)}?fields=id`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `state.damaged-${new Date().toISOString().replace(/[:.]/g, '-')}.json` }) }).catch(() => {});
-    delete ids[`file:${dir}/state.json`]; persistIds(); lastWritten.delete(`${dir}/state.json`); seenState = null; stats.healed++;
-    return data;
-  }
-  seenState = { id: file.id, rev: file.appProperties?.rev || '', modifiedTime: file.modifiedTime };
-  if (file.appProperties?.h) lastWritten.set(`${dir}/state.json`, file.appProperties.h); else lastWritten.delete(`${dir}/state.json`);
-  return data;
+  const by = await listMine(dir);
+  if (!Object.keys(by).length) { seenState = null; seen = {}; return null; }
+  const want = Object.values(by).filter(f => all || !f.appProperties?.rev || f.appProperties.rev !== seen[f.name]);
+  const out = { core: null, parts: {}, changed: [], salvaged: false };
+  await pool(want, 4, async (f) => {
+    let data = await readJsonFile(f);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      let text = ''; try { text = decode(await downloadFile(f.id)); } catch {}
+      data = salvageJSON(text); await setAside(dir, f); out.salvaged = true;
+      if (!data) return;
+    } else {
+      seen[f.name] = f.appProperties?.rev || '';
+      if (f.appProperties?.h) lastWritten.set(`${dir}/${f.name}`, f.appProperties.h); else lastWritten.delete(`${dir}/${f.name}`);
+      if (f.name === 'state.json') seenState = { id: f.id, rev: seen[f.name], modifiedTime: f.modifiedTime };
+    }
+    if (f.name === 'state.json') out.core = data; else out.parts[f.name] = data;
+    out.changed.push(f.name);
+  });
+  saveSeen();
+  return out;
 }
-/** Has another device written state.json since we last read it? (one metadata request) */
-export async function remoteStateMoved() {
-  if (!seenState?.id) return false;
-  try { const m = await fileMeta(seenState.id, 'id,modifiedTime,trashed,appProperties'); return !m || m.trashed ? true : (m.appProperties?.rev || '') !== seenState.rev; }
-  catch (e) { if (e.status === 404) return true; throw e; }
+/** Has another device written any of our files since we last read them? (one listing) → names that moved */
+export async function remoteMoved(root) {
+  const dir = await meDir(root), by = await listMine(dir);
+  return Object.values(by).filter(f => (f.appProperties?.rev || '') !== seen[f.name]).map(f => f.name);   // never read (undefined) counts as moved
 }
+/** Write the state as core + parts: only files whose content changed are uploaded. Refused (conflict) when another device wrote
+ *  one of our files since we read it, unless force (the caller has just merged it). → { written, skipped } */
 export async function saveRemoteState(root, state, { force = false } = {}) {
   const dir = await meDir(root);
-  if (!force && await remoteStateMoved()) { const e = new GoogleError('Another device saved first.', { status: 409 }); e.conflict = true; throw e; }
-  const rev = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 7)}`;
-  const r = await putJson(dir, 'state.json', state, { props: { rev }, fileId: seenState?.id || null, always: force });
-  if (!r.skipped) seenState = { id: r.id, rev, modifiedTime: r.modifiedTime };
-  return r;
+  if (!force) { const moved = await remoteMoved(root); if (moved.length) { const e = new GoogleError('Another device saved first.', { status: 409 }); e.conflict = true; e.moved = moved; throw e; } }
+  const { core, parts } = split(state), files = [['state.json', core], ...Object.entries(parts)];
+  let written = 0, skipped = 0;
+  await pool(files, 4, async ([name, obj]) => {
+    const rev = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 7)}`;
+    const r = await putJson(dir, name, obj, { props: { rev }, fileId: fileIds[name] || null, always: false });
+    if (r.skipped) { skipped++; return; }
+    written++; seen[name] = rev; fileIds[name] = r.id;
+    if (name === 'state.json') seenState = { id: r.id, rev, modifiedTime: r.modifiedTime };
+  });
+  saveSeen();
+  return { written, skipped };
 }
-export function seenStateRev() { return seenState?.rev || ''; }
+/** A small worker pool: at most n at once, and the first real failure stops the rest (no half-hearted Promise.all). */
+async function pool(items, n, fn) {
+  let i = 0, err = null;
+  const run = async () => { while (!err && i < items.length) { const it = items[i++]; try { await fn(it); } catch (e) { err = e; } } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, run));
+  if (err) throw err;
+}
+export function seenStateRev() { return seen['state.json'] || ''; }
+export const seenRev = (name) => seen[name] || '';
+/** Forget what was read (after a restore or a recovery, so the next pull reads every file). */
+export function forgetSeen() { seen = {}; seenState = null; saveSeen(); }
 
 // ── daily backups of state.json: hub/sudachi/backups/state-YYYY-MM-DD.json, the newest 14 kept
 export async function backupDaily(root, state, dayKey) {

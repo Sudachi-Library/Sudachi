@@ -3,11 +3,14 @@
 // never drops an edit (every collection merges per record or per field, by edit time), and a damaged localStorage copy is
 // kept and recovered instead of silently replaced.
 import { uid } from './util.js';
+import { createDevStore, createTabChannel } from './devstore.js';
 
 const KEY = 'sudachi.state.v1';
 const BAK = 'sudachi.state.v1.bak';        // this device's last copy that loaded cleanly (written once per app start)
 const CORRUPT = 'sudachi.state.corrupt.';  // + ISO time: a copy that could not be read, kept for download
-const TOMBSTONE_DAYS = 400;                 // a device can be offline this long and still not bring deleted things back
+const TOMBSTONE_DAYS = 400;
+const BIG = 'sudachi.state.inIdb';            // set when the library is too big for localStorage and lives in IndexedDB only
+const LS_MAX = 1.2e6;                       // characters (≈2.4 MB as UTF-16): above this localStorage is not used for the library                 // a device can be offline this long and still not bring deleted things back
 
 const DEFAULT_SETTINGS = { clientId: '753489712404-ra7ahu34gjl305b4ss1765idmqg7am5s.apps.googleusercontent.com', calendarIds: ['primary'], planCalendarId: 'primary', alarmPlan: 10, driveFolder: 'My Apps', theme: 'dark' };
 
@@ -163,18 +166,46 @@ export function salvageJSON(raw) {
 export const persistence = { ok: true, lastError: '', bytes: 0, since: 0 };
 const persistListeners = new Set();
 export function onPersistence(fn) { persistListeners.add(fn); return () => persistListeners.delete(fn); }
+// Two places on this device: IndexedDB (the durable copy, any size, two slots so a cut-off save never loses the last good one)
+// and, while the library is small, localStorage too (read at once on start-up, and the fallback where IndexedDB is missing).
+export const device = { idb: false, idbError: '', lastIdbSave: 0, slot: '', bytes: 0, tabs: 1 };
+const dev = createDevStore('sudachi');
+const tabs = createTabChannel('sudachi.state');
+let idbTimer = null, idbRaw = null, idbWriting = null;
+function idbQueue(raw) { if (!dev.ok) return; idbRaw = raw; clearTimeout(idbTimer); idbTimer = setTimeout(() => { flushDevice().catch(() => {}); }, 200); }
+/** Write the waiting copy to IndexedDB now (on leaving the page, before a risky step). */
+export async function flushDevice() {
+  clearTimeout(idbTimer); if (idbWriting) await idbWriting.catch(() => {});
+  if (idbRaw == null || !dev.ok) return;
+  const raw = idbRaw; idbRaw = null;
+  idbWriting = dev.write(raw, highestSeen(state)).then(slot => { device.idb = true; device.idbError = ''; device.lastIdbSave = Date.now(); device.slot = slot; device.bytes = raw.length * 2; tabs.post({ type: 'saved', hi: highestSeen(state) }); refreshOk(); })
+    .catch(e => { device.idb = false; device.idbError = e?.message || 'IndexedDB save failed'; refreshOk(); })
+    .finally(() => { idbWriting = null; });
+  return idbWriting;
+}
+let lsSaved = true;
+function refreshOk() {
+  const was = persistence.ok, ok = lsSaved || device.idb;
+  if (ok) { persistence.ok = true; persistence.lastError = ''; persistence.since = 0; } else { persistence.ok = false; persistence.since ||= Date.now(); }
+  if (was !== persistence.ok) { for (const fn of persistListeners) try { fn(persistence); } catch {} alerts(); }
+}
 function persist() {
   const raw = JSON.stringify(state);
   const was = persistence.ok;
   persistence.bytes = raw.length * 2;
   let saved = false;
-  for (let attempt = 0; attempt < 3 && !saved; attempt++) {
-    try { localStorage.setItem(KEY, raw); saved = true; }
+  const big = raw.length > LS_MAX && dev.ok && !device.idbError;
+  if (big) { lsDel(KEY); lsDel(BAK); lsSet(BIG, String(Date.now())); saved = true; }   // too big for localStorage: IndexedDB carries it (refreshOk corrects this if its save fails)
+  else for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+    try { localStorage.setItem(KEY, raw); saved = true; lsDel(BIG); }
     catch (e) {
       persistence.lastError = e?.name === 'QuotaExceededError' || /quota/i.test(e?.message || '') ? 'This device\'s storage is full' : (e?.message || 'save failed');
       if (attempt === 0) lsDel('sudachi.events'); else if (attempt === 1) lsDel(BAK); else console.warn('persist failed', e);
     }
   }
+  lsSaved = saved && !big;
+  idbQueue(raw);
+  if (!saved && device.idb) saved = true;   // IndexedDB holds it
   if (saved) { persistence.ok = true; persistence.lastError = ''; persistence.since = 0; }
   else { persistence.ok = false; persistence.since ||= Date.now(); }
   if (was !== persistence.ok) { for (const fn of persistListeners) try { fn(persistence); } catch {} alerts(); }
@@ -391,6 +422,28 @@ function alerts() {
   if (typeof document === 'undefined') return;
   if (!recovery && persistence.ok && !document.querySelector('.d10-alert')) return;
   import('./store-alerts.js').then(m => m.showStoreAlerts({ recovery: () => recovery, persistence, corruptCopy, dismissRecovery, exportJSON })).catch(() => {});
+}
+/** Start-up, after the quick localStorage read: take in IndexedDB's copy if it holds anything newer (another tab, or a library
+ *  too big for localStorage), and listen for saves from other tabs. Awaited by app.js before the first screen. */
+export async function init() {
+  if (!dev.ok) return false;
+  try {
+    const best = await bestDeviceCopy();
+    device.idb = true;
+    if (best && highestSeen(best) > highestSeen(state)) {
+      state = complete(sanitize(lsGet(KEY) ? mergeStates(state, best) : best));
+      persist(); for (const fn of listeners) fn(state);
+    } else if (!best || highestSeen(state) > highestSeen(best)) { idbQueue(JSON.stringify(state)); await flushDevice(); }
+  } catch (e) { device.idb = false; device.idbError = e?.message || 'IndexedDB unavailable'; }
+  tabs.on(async (msg) => {
+    if (msg?.type !== 'saved' || !(msg.hi > highestSeen(state))) return;
+    try { const best = await bestDeviceCopy(); if (best && highestSeen(best) > highestSeen(state)) { state = complete(sanitize(mergeStates(state, best))); persist(); for (const fn of listeners) fn(state); } } catch {}
+  });
+  return true;
+}
+async function bestDeviceCopy() {
+  for (const s of await dev.slots()) { const p = parseState(s.raw); if (p) return sanitize(p); }
+  return null;
 }
 state = load();
 if (recovery) mergePending = true;
